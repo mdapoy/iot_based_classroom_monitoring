@@ -37,6 +37,9 @@ def insert_summary_record(report_id: int, file_path: str):
     }).execute()
 
 def generate_pdf(summary: str, output_path: str):
+    import os
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
     doc = SimpleDocTemplate(output_path)
     styles = getSampleStyleSheet()
 
@@ -49,9 +52,19 @@ def generate_pdf(summary: str, output_path: str):
     return output_path
 
 def get_existing_summary(report_id: int):
-    res = supabase.table("summary") \
-        .select("*") \
-        .eq("reports_id", report_id) \
+    res = supabase.table("reports") \
+        .select("summary_path") \
+        .eq("id", report_id) \
         .execute()
 
-    return res.data[0] if res.data else None
+    if not res.data:
+        return None
+
+    row = res.data[0]
+
+    if not row.get("summary_path"):
+        return None
+
+    return {
+        "file_path": row["summary_path"]
+    }

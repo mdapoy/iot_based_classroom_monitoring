@@ -1,5 +1,4 @@
 from fastapi import APIRouter
-# from fastapi.responses import FileResponse
 from services.report.report_orchestrator import generate_report
 from services.report.report_service import get_existing_summary
 from repositories.supabase_client import supabase
@@ -104,4 +103,23 @@ async def get_summary(report_id: int):
     return {
         "status": "success",
         "url": public_url
+    }
+
+@router.get("/report-status/{report_id}")
+async def get_report_status(report_id: int):
+    res = supabase.table("reports") \
+        .select("status, error_message") \
+        .eq("id", report_id) \
+        .execute()
+    
+    if not res.data:
+        return {
+            "status": "error",
+            "message": "Report tidak ditemukan"
+        }
+    
+    return {
+        "status": "success",
+        "report_status": res.data[0]["status"],
+        "error_message": res.data[0].get("error_message")
     }

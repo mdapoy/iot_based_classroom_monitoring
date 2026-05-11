@@ -2,9 +2,22 @@ from fastapi import FastAPI
 from supabase import create_client
 from dotenv import load_dotenv
 import os
+import asyncio
 from fastapi.middleware.cors import CORSMiddleware
-from api.v1.routes import csv_routes, monitoring_routes, record_routes, report_routes, scheduled_routes, stt_routes
-from api.v1.routes import summary_routes
+from contextlib import asynccontextmanager
+
+from api.v1.routes import (
+    csv_routes,
+    monitoring_routes,
+    record_routes,
+    report_routes,
+    scheduled_routes,
+    stt_routes,
+    summary_routes
+)
+
+from services.stt.worker import run_worker
+from services.report.summary_worker import run_summary_worker
 
 origins = ["*"]
 
@@ -15,18 +28,18 @@ key = os.getenv("SUPABASE_KEY")
 
 supabase = create_client(url, key)
 
-# ini menggunakan lifespan untuk menjalankan fungsi load_schedule_from_db saat server start, sehingga scheduler akan langsung aktif tanpa perlu menunggu request pertama
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
+ENV = os.getenv("ENV", "dev")
 
-#     # dijalankan saat server start
-#     load_schedule_from_db()
+# ✅ LIFESPAN 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print(f"[SYSTEM] ENV: {ENV}")
+    yield
+    print("[SYSTEM] Shutting down...")
 
-#     yield
 
-# app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan)
 
-app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

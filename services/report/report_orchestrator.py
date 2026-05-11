@@ -1,35 +1,26 @@
-from fileinput import filename
-
 from repositories.supabase_client import supabase
-from services.storage.storage_service import download_transcript
 from services.storage.google_drive import get_file_from_gdrive_flexible
-from services.stt.stt_service import send_to_stt_file
-from services.summarizer.summarizer import summarize_text
-from services.report.report_service import generate_pdf, get_existing_summary
+from services.report.report_service import get_existing_summary
+from services.worker.worker_manager import start_stt_worker, start_summary_worker
 from utils.metadata_parser import parse_filename
 from core.logger import logger
-from services.storage.storage_service import upload_summary
-from services.report.report_service import insert_summary_record
-from datetime import datetime
-import asyncio
-import os
 
 TABLE = "reports"
 
+
 async def generate_report(data: dict):
-
     try:
-        logger.info(f"[START] Generate report: {data}")
+        logger.info(f"[START] Generate report | raw_data={data}")
 
-        # ✅ CLEAN
-        def clean(text):
-            return str(text).strip()
+        # CLEAN
+        data = {k: str(v).strip() for k, v in data.items()}
+        logger.info(f"[CLEAN] Data normalized | data={data}")
 
-        data = {k: clean(v) for k, v in data.items()}
+        # =========================
+        # 1. CHECK EXISTING REPORT
+        # =========================
+        logger.info("[CACHE] Checking existing report...")
 
-        logger.debug(f"[DEBUG] Cleaned data: {data}")
-
-        # 🔍 CHECK DB
         existing = supabase.table(TABLE).select("*").match({
             "tanggal": data["tanggal"],
             "jam": data["jam"],
@@ -41,206 +32,193 @@ async def generate_report(data: dict):
 
         record = existing.data[0] if existing.data else None
 
-        # ✅ CEK SUMMARY DULU (NEW)
+        # =========================
+        # 2. IF REPORT EXISTS
+        # =========================
         if record:
-            existing_summary = get_existing_summary(record["id"])
+            report_id = record["id"]
+            logger.info(f"[CACHE] Found existing report | report_id={report_id}")
 
+            # ---- cek summary ----
+            existing_summary = get_existing_summary(report_id)
             if existing_summary:
-                logger.info("[CACHE HIT] Summary already exists")
+                logger.info(f"[CACHE HIT] Summary found | file_path={existing_summary['file_path']}")
 
-                file_path = existing_summary["file_path"]
-
-                # 🚨 HANDLE LEGACY DATA
-                if file_path.startswith("http"):
-                    logger.warning("[LEGACY DATA] file_path already full URL")
-                    public_url = file_path
-                else:
-                    public_url = supabase.storage \
-                        .from_("summary") \
-                        .get_public_url(file_path)
-
-                logger.info(f"[CACHE RETURN] URL: {public_url}")
+                public_url = supabase.storage \
+                    .from_("summary") \
+                    .get_public_url(existing_summary["file_path"])
 
                 return {
                     "status": "success",
                     "source": "cache",
                     "url": public_url,
-                    "report_id": record["id"]
+                    "report_id": report_id
                 }
 
-        # 🧠 filename
-        def normalize_jam(jam: str):
-            return jam[:5]  # 08:30:00 → 08:30
-        
-        jam = normalize_jam(data["jam"])
+            # ---- cek transcript (dari audio_chunks) ----
+            transcript_path = record.get("transcript_path")
 
-        base_filename = f"{data['tanggal']}_{jam}_{data['ruangan']}_{data['kode_matkul']}_{data['kode_dosen']}_{data['kelas']}"
-        logger.info(f"[INFO] Base filename: {base_filename}")
+            if transcript_path:
+                logger.info(f"[CACHE HIT] Transcript exists | path={transcript_path}")
 
-        # 🔁 BELUM ADA TRANSKRIP
-        if not record or not record.get("transcription_done"):
+                # 🔒 kalau lagi summarizing
+                if record["status"] == "summarizing":
+                    logger.info("[SKIP] Already summarizing")
+                    return {
+                        "status": "processing",
+                        "report_id": report_id
+                    }
 
-            logger.info("[STEP] Downloading from Google Drive...")
+                # 🔥 trigger summary ulang
+                supabase.table("reports").update({
+                    "status": "transcribed",
+                    "error_message": None
+                }).eq("id", report_id).execute()
 
-            audio_path, real_filename = get_file_from_gdrive_flexible(base_filename)
+                await start_summary_worker()
 
-            if not audio_path:
-                raise Exception(f"File tidak ditemukan di GDrive: {base_filename}")
+                return {
+                    "status": "processing_summary",
+                    "report_id": report_id
+                }
 
-            meta = parse_filename(real_filename)
+            # =========================
+            # FALLBACK CEK audio_chunks
+            # =========================
+            chunks = supabase.table("audio_chunks") \
+                .select("chunk_index, transcript, status") \
+                .eq("report_id", report_id) \
+                .order("chunk_index") \
+                .execute()
 
-            # 🚀 SEND STT
-            stt_result = send_to_stt_file(audio_path)
+            chunk_data = chunks.data or []
 
-            if "error" in stt_result:
-                raise Exception(stt_result["error"])
+            if chunk_data:
+                all_done = all(c["status"] == "done" for c in chunk_data)
 
-            task_id = stt_result["response"]["task_id"]
-            logger.info(f"[INFO] Task ID: {task_id}")
+                if all_done:
+                    # 🔒 jangan ganggu kalau masih proses STT
+                    if record["status"] in ["chunking", "processing"]:
+                        logger.info("[SKIP] Still processing STT")
+                        return {
+                            "status": "processing",
+                            "report_id": report_id
+                        }
 
-            # 🗄️ INSERT AWAL
-            insert_res = supabase.table(TABLE).insert({
-                **meta,
-                "task_id": task_id,
-                "transcription_done": False,
-                "file_path": None,
-                "created_at": datetime.utcnow().isoformat()
-            }).execute()
+                    # 🔒 kalau lagi summarizing
+                    if record["status"] == "summarizing":
+                        logger.info("[SKIP] Already summarizing")
+                        return {
+                            "status": "processing",
+                            "report_id": report_id
+                        }
 
-            record_id = insert_res.data[0]["id"]
+                    logger.info("[RECOVERY] Transcript complete → trigger summary worker")
 
-            # ⏳ POLLING DB
-            transcript = None
+                    supabase.table("reports").update({
+                        "status": "transcribed",
+                        "error_message": None
+                    }).eq("id", report_id).execute()
 
-            for i in range(60):
-                logger.info(f"[POLL {i}] Checking DB...")
+                    return {
+                        "status": "processing_summary",
+                        "report_id": report_id
+                    }
 
-                check = supabase.table(TABLE).select("*").match({
-                    "task_id": task_id
-                }).execute()
-
-                db_record = check.data[0] if check.data else None
-
-                if db_record and db_record.get("transcription_done"):
-                    transcript = download_transcript(db_record["file_path"])
-                    logger.info("[SUCCESS] Transcript ready")
-                    break
-
-                await asyncio.sleep(3)
-
-            if not transcript:
-                raise Exception("STT timeout")
-
-            os.remove(audio_path)
-
-        else:
-            logger.info("[STEP] Using cached transcript")
-            transcript = download_transcript(record["file_path"])
-        
-        # ✨ SUMMARY (WITH RETRY + LOGGING)
-        summary = None
-        max_retry = 3
-
-        for attempt in range(max_retry):
-            try:
-                logger.info(f"[SUMMARY] Attempt {attempt+1}/{max_retry}")
-
-                summary = summarize_text(transcript)
-
-                # log raw response (optional tapi bagus untuk debug)
-                logger.debug(f"[SUMMARY RESPONSE] {summary}")
-
-                if summary.get("success"):
-                    logger.info("[SUMMARY SUCCESS]")
-                    break
-
-                error_msg = str(summary.get("error"))
-
-                logger.warning(f"[SUMMARY FAILED] Attempt {attempt+1}: {error_msg}")
-
-                # 🔁 Retry hanya untuk error tertentu
-                if "503" in error_msg or "UNAVAILABLE" in error_msg:
-                    wait_time = 2 ** attempt  # exponential backoff
-                    logger.warning(f"[RETRY] Model busy, retrying in {wait_time}s...")
-                    await asyncio.sleep(wait_time)
                 else:
-                    # langsung fail kalau bukan error server
-                    raise Exception(error_msg)
+                    logger.info("[WAIT] Transcript not complete yet")
 
-            except Exception as e:
-                logger.error(f"[SUMMARY EXCEPTION] Attempt {attempt+1}: {str(e)}")
+                    return {
+                        "status": "processing",
+                        "report_id": report_id
+                    }
 
-                if attempt == max_retry - 1:
-                    raise Exception(f"Gagal generate summary: {str(e)}")
-
-                wait_time = 2 ** attempt
-                logger.warning(f"[RETRY EXCEPTION] retrying in {wait_time}s...")
-                await asyncio.sleep(wait_time)
-
-
-        # 🚨 FINAL CHECK
-        if not summary or not summary.get("success"):
-            raise Exception("Gagal generate summary setelah beberapa percobaan")
-      
-        # 🧾 REPORT ID
-        report_id = record["id"] if record else record_id
-
-        # 📄 PDF
-        output_file = base_filename + ".pdf"
-        generate_pdf(summary["result"], output_file)
-
-        # 🛑 DOUBLE CHECK (ANTI RACE CONDITION)
-        existing_summary = get_existing_summary(report_id)
-        if existing_summary:
-            logger.info("[SKIP] Summary already exists before upload")
-
-            # hapus file lokal karena tidak jadi dipakai
-            os.remove(output_file)
-
-            file_path = existing_summary["file_path"]
-
-            if file_path.startswith("http"):
-                logger.warning("[LEGACY DATA] file_path already full URL")
-                public_url = file_path
-            else:
-                public_url = supabase.storage \
-                    .from_("summary") \
-                    .get_public_url(file_path)
+            # ---- belum ada transcript sama sekali ----
+            logger.warning("[CACHE MISS] No transcript found, continue processing")
 
             return {
-                "status": "success",
-                "source": "cache",
-                "report_id": report_id,
-                "url": public_url
+                "status": "processing",
+                "report_id": report_id
             }
 
-        # 📦 UPLOAD SUMMARY
-        filename = f"{data['tanggal']}/{output_file}"
-        public_url = upload_summary(output_file, filename)
+        # =========================
+        # 3. IF REPORT NOT EXISTS
+        # =========================
+        logger.info("[CACHE] No existing report found")
 
-        logger.info(f"[UPLOAD] File path (storage): {filename}")
-        logger.info(f"[UPLOAD] Public URL (generated): {public_url}")
+        # NORMALIZE JAM
+        jam = data["jam"][:5]
+        logger.info(f"[NORMALIZE] Jam normalized | jam={jam}")
 
-        # 📝 INSERT SUMMARY
-        insert_summary_record(report_id, filename)
+        base_filename = f"{data['tanggal']}_{jam}_{data['ruangan']}_{data['kode_matkul']}_{data['kode_dosen']}_{data['kelas']}"
+        logger.info(f"[FILENAME] Generated base filename | base_filename={base_filename}")
 
-        logger.info(f"[DB INSERT] Saved file_path to DB: {filename}")
+        # DOWNLOAD AUDIO
+        logger.info(f"[DOWNLOAD] Attempting to download audio | filename={base_filename}")
 
-        # 🧹 HAPUS FILE LOKAL
-        os.remove(output_file)
+        audio_path, real_filename, used_folder_id = get_file_from_gdrive_flexible(base_filename)
 
-        logger.info("[DONE] Report generated")
+        if not audio_path:
+            logger.error(f"[DOWNLOAD FAILED] File not found | searched_folder={used_folder_id}")
+            raise Exception("File tidak ditemukan di GDrive")
+
+        logger.info(f"[DOWNLOAD SUCCESS] audio_path={audio_path} | real_filename={real_filename}")
+
+        # PARSE METADATA
+        meta = parse_filename(real_filename)
+        logger.info(f"[PARSE] Metadata extracted | meta={meta}")
+
+        # INSERT REPORT
+        logger.info("[DB] Inserting new report...")
+        insert_res = supabase.table(TABLE).insert({
+            **meta,
+            "status": "pending"
+        }).execute()
+
+        report_id = insert_res.data[0]["id"]
+        logger.info(f"[DB SUCCESS] Report inserted | report_id={report_id}")
+
+        # CHUNK AUDIO
+        logger.info("[CHUNKING] Splitting audio...")
+        from services.chunker import split_audio
+
+        chunks = split_audio(audio_path)
+
+        if not chunks:
+            logger.error("[CHUNKING FAILED] No chunks generated")
+            raise Exception("Gagal melakukan chunking audio")
+
+        logger.info(f"[CHUNKING SUCCESS] Total chunks={len(chunks)}")
+
+        # INSERT CHUNKS
+        logger.info("[DB] Inserting audio chunks...")
+        for i, chunk_path in enumerate(chunks):
+            supabase.table("audio_chunks").insert({
+                "report_id": report_id,
+                "chunk_index": i,
+                "chunk_path": chunk_path,
+                "status": "pending"
+            }).execute()
+
+        logger.info("[DB SUCCESS] All chunks inserted")
+
+        # UPDATE STATUS
+        supabase.table("reports").update({
+            "status": "chunking"
+        }).eq("id", report_id).execute()
+
+        logger.info(f"[DONE] Report processing started | report_id={report_id}")
+
+        await start_stt_worker()
+        await start_summary_worker()
 
         return {
-            "status": "success",
-            "source": "generated",
-            "report_id": report_id,
-            "url": public_url
+            "status": "processing",
+            "report_id": report_id
         }
 
     except Exception as e:
-        logger.error(f"[ERROR] {str(e)}", exc_info=True)
-
+        logger.error(f"[ERROR] Generate report failed | error={str(e)}", exc_info=True)
         return {
             "status": "error",
             "message": str(e)
