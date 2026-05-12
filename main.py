@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from supabase import create_client
 from dotenv import load_dotenv
 import os
-import asyncio
+import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -16,8 +16,7 @@ from api.v1.routes import (
     summary_routes
 )
 
-from services.stt.worker import run_worker
-from services.report.summary_worker import run_summary_worker
+port = int(os.getenv("PORT", 8000))
 
 origins = ["*"]
 
@@ -55,3 +54,6 @@ app.include_router(stt_routes.router)
 app.include_router(summary_routes.router)
 app.include_router(report_routes.router)
 app.include_router(monitoring_routes.router)
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
