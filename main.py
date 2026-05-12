@@ -16,8 +16,6 @@ from api.v1.routes import (
     summary_routes
 )
 
-port = int(os.getenv("PORT", 8000))
-
 origins = ["*"]
 
 load_dotenv()
