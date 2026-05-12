@@ -1,6 +1,3 @@
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning, message=".*ArbitraryType.*")
-
 from fastapi import FastAPI
 from supabase import create_client
 from dotenv import load_dotenv
