@@ -182,7 +182,7 @@ async def generate_report(data: dict):
         logger.info("[CHUNKING] Splitting audio...")
         from services.chunker import split_audio
 
-        chunks = split_audio(audio_path)
+        chunks = split_audio(audio_path, report_id=report_id)
 
         if not chunks:
             logger.error("[CHUNKING FAILED] No chunks generated")

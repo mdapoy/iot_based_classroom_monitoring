@@ -1,16 +1,20 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from services.storage.gdrive_video import list_videos, list_audios
 from utils.metadata_parser import parse_filename_monitoring
 from services.scheduler.scheduler import find_jadwal
 from repositories.supabase_client import supabase
+from api.v1.deps import require_admin, require_authenticated, optional_authenticated
 import time
+import os
+
+MONITORING_FOLDER_ID = os.getenv("MONITORING_FOLDER_ID")
 
 last_scan_time = 0
 
 router = APIRouter(tags=["Monitoring"])
 
 @router.post("/monitoring/scan-drive")
-def scan_drive():
+def scan_drive(user: dict = Depends(optional_authenticated)):
 
     global last_scan_time
 
@@ -22,7 +26,7 @@ def scan_drive():
 
     last_scan_time = time.time()
 
-    FOLDER_ID = "1lF7NDuXOYUwBLNtfYpaOAvxWA44AqIJ-"
+    FOLDER_ID = MONITORING_FOLDER_ID
 
     # =========================
     # SCAN VIDEO & AUDIO
@@ -129,42 +133,36 @@ def scan_drive():
     }
     
 @router.get("/monitoring")
-def get_monitoring():
+def get_monitoring(user: dict = Depends(optional_authenticated)):
 
-    monitoring = supabase.table("monitoring").select("*").execute()
+    monitoring = supabase.table("monitoring").select("*, jadwal_kuliah(*)").execute()
 
     data = []
 
     for item in monitoring.data:
 
-        jadwal = (
-            supabase
-            .table("jadwal_kuliah")
-            .select("*")
-            .eq("id", item["jadwal_id"])
-            .single()
-            .execute()
-        )
-
-        j = jadwal.data
+        j = item.get("jadwal_kuliah") or {}
 
         data.append({
             "id": item["id"],
             "tanggal": item["tanggal"],
-            "jam": f"{j['jam_mulai']} - {j['jam_selesai']}",
-            "ruangan": j["ruangan"],
-            "matkul": j["mata_kuliah"],
-            "kode": j["kode_mata_kuliah"],
-            "kodeDosen": j["dosen_utama"],
+            "jam": f"{j.get('jam_mulai', '')} - {j.get('jam_selesai', '')}",
+            "ruangan": j.get("ruangan", ""),
+            "matkul": j.get("mata_kuliah", ""),
+            "kode": j.get("kode_mata_kuliah", ""),
+            "kodeDosen": j.get("dosen_utama", ""),
             "kehadiran": item["kehadiran"],
             "aktivitas": item["aktivitas_dominan"],
-            "kelas": j["kelas"],
+            "kelas": j.get("kelas", ""),
+            "video_url": item.get("video_url"),
+            "audio_file_id": item.get("audio_file_id"),
+            "base_filename": item.get("base_filename"),
         })
 
     return data
 
 @router.get("/{monitoring_id}")
-def get_monitoring_detail(monitoring_id: int):
+def get_monitoring_detail(monitoring_id: int, user: dict = Depends(optional_authenticated)):
 
     response = (
         supabase.table("monitoring")

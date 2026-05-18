@@ -6,10 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from api.v1.routes import (
+    auth_routes,
     csv_routes,
     monitoring_routes,
     record_routes,
     report_routes,
+    rps_routes,
     scheduled_routes,
     stt_routes,
     summary_routes
@@ -44,12 +46,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_routes.router)
 app.include_router(csv_routes.router)
 app.include_router(record_routes.router)
 app.include_router(scheduled_routes.router)
 app.include_router(stt_routes.router)
 app.include_router(summary_routes.router)
 app.include_router(report_routes.router)
+app.include_router(rps_routes.router)
 app.include_router(monitoring_routes.router)
 
 # from fastapi import FastAPI

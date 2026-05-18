@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from datetime import datetime
 from fastapi import HTTPException
 from services.recorder.video_recorder import start_video_recording, stop_video_recording
 from services.scheduler.scheduler import schedule_recording
+from api.v1.deps import require_admin
 from fastapi import Query
 
 router = APIRouter(prefix="/record", tags=["record"])
@@ -19,7 +20,8 @@ def start_record(
     ruangan: str = Query(...),
     kode_mata_kuliah: str = Query(...),
     dosen_utama: str = Query(...),
-    kelas: str = Query(...)
+    kelas: str = Query(...),
+    user: dict = Depends(require_admin)
 ):
     date_now = datetime.now().strftime("%Y%m%d")
 
@@ -48,7 +50,7 @@ def start_record(
 # def stop_record():
 #     return stop_video_recording()
 
-def stop_record():
+def stop_record(user: dict = Depends(require_admin)):
 
     result = stop_video_recording()
 
@@ -58,7 +60,7 @@ def stop_record():
     return result
 
 @router.post("/schedule-record")
-def schedule_record(start_time: str, stop_time: str):
+def schedule_record(start_time: str, stop_time: str, user: dict = Depends(require_admin)):
 
     start_datetime = datetime.fromisoformat(start_time)
     stop_datetime = datetime.fromisoformat(stop_time)

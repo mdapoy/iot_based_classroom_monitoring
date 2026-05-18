@@ -3,9 +3,9 @@
 import os
 import subprocess
 
-def split_audio(file_path, chunk_duration=600):
+def split_audio(file_path, chunk_duration=600, report_id=None):
 
-    output_dir = "chunks"
+    output_dir = f"chunks/{report_id}" if report_id else "chunks"
     os.makedirs(output_dir, exist_ok=True)
 
     output_pattern = os.path.join(output_dir, "chunk_%03d.wav")
@@ -24,4 +24,5 @@ def split_audio(file_path, chunk_duration=600):
     return sorted([
         os.path.join(output_dir, f)
         for f in os.listdir(output_dir)
+        if f.endswith(".wav")
     ])

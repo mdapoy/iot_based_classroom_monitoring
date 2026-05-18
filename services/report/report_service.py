@@ -1,8 +1,10 @@
+import os
 from docx import Document
 from repositories.supabase_client import supabase
 from datetime import datetime
-from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.platypus import SimpleDocTemplate, Paragraph, PageBreak, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
 
 TABLE = "reports"
 
@@ -37,8 +39,9 @@ def insert_summary_record(report_id: int, file_path: str):
     }).execute()
 
 def generate_pdf(summary: str, output_path: str):
-    import os
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    dir_name = os.path.dirname(output_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
 
     doc = SimpleDocTemplate(output_path)
     styles = getSampleStyleSheet()
@@ -50,6 +53,57 @@ def generate_pdf(summary: str, output_path: str):
     doc.build(content)
 
     return output_path
+
+def generate_combined_pdf(summary: str, analysis: dict, output_path: str) -> str:
+    """
+    Buat PDF 2 halaman:
+      Halaman 1 — Ringkasan materi perkuliahan
+      Halaman 2 — Analisis kesesuaian RPS
+    """
+    dir_name = os.path.dirname(output_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+
+    doc = SimpleDocTemplate(output_path)
+    styles = getSampleStyleSheet()
+    content = []
+
+    # ── HALAMAN 1: RINGKASAN ────────────────────────────────
+    content.append(Paragraph("<b>RINGKASAN MATERI PERKULIAHAN</b>", styles["Title"]))
+    content.append(Spacer(1, 0.5 * cm))
+    content.append(Paragraph(summary, styles["BodyText"]))
+
+    content.append(PageBreak())
+
+    # ── HALAMAN 2: ANALISIS RPS ─────────────────────────────
+    content.append(Paragraph("<b>ANALISIS KESESUAIAN RPS</b>", styles["Title"]))
+    content.append(Spacer(1, 0.4 * cm))
+    content.append(Paragraph(
+        f"Pertemuan ke-{analysis.get('pertemuan_ke', '-')}",
+        styles["Heading2"]
+    ))
+    content.append(Spacer(1, 0.3 * cm))
+    content.append(Paragraph(
+        f"<b>Materi Pembelajaran RPS:</b> {analysis.get('materi_pembelajaran', '-')}",
+        styles["BodyText"]
+    ))
+    content.append(Spacer(1, 0.2 * cm))
+    content.append(Paragraph(
+        f"<b>Kesesuaian Materi:</b> {analysis.get('kesesuaian', '-')}",
+        styles["BodyText"]
+    ))
+    content.append(Spacer(1, 0.2 * cm))
+    content.append(Paragraph(
+        f"<b>Kesesuaian Materi:</b> {analysis.get('status_waktu', '-')}",
+        styles["BodyText"]
+    ))
+    content.append(Spacer(1, 0.3 * cm))
+    content.append(Paragraph("<b>Penjelasan:</b>", styles["Heading3"]))
+    content.append(Paragraph(analysis.get("penjelasan", "-"), styles["BodyText"]))
+
+    doc.build(content)
+    return output_path
+
 
 def get_existing_summary(report_id: int):
     res = supabase.table("reports") \

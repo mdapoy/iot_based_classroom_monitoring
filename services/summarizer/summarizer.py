@@ -71,7 +71,7 @@ def summarize_text(transcript: str, max_retries=3):
     2. Ringkasan harus mencakup poin-poin penting dari transkrip.
     3. Ringkasan harus dalam bentuk paragraf.
     4. Fokus pada konteks pembelajaran Fisika 2.
-    5. jangan gunakan karakter seperti ■.
+    5. jangan gunakan karakter seperti ■ dan $.
 
     Berikut transkrip:
     {transcript}
