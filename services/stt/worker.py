@@ -1,159 +1,159 @@
-# services/stt/worker.py
+# services/stt/worker.py  (AssemblyAI mode)
 import asyncio
 import os
-from datetime import datetime, timedelta
-from repositories.supabase_client import supabase
-from services.stt.stt_service import send_to_stt_file
-from core.logger import logger
-import os
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
+from repositories.supabase_client import supabase
+from services.stt.stt_service import (
+    upload_file_to_aai,
+    submit_transcript_aai,
+    CALLBACK_URL,
+)
+from core.logger import logger
 
 load_dotenv()
 
-semaphore = asyncio.Semaphore(5)
+CHUNK_DURATION_SEC = int(os.getenv("CHUNK_DURATION_SEC", "300"))
+STT_LANGUAGE       = os.getenv("STT_LANGUAGE", "id")
 
-RETRY_DELAY_SECONDS = 30
-MAX_RETRY_WINDOW_MINUTES = 10
-IDLE_TIMEOUT = 300  # 5 menit
-
-
-def is_retryable_error(error: str) -> bool:
-    error = error.lower()
-
-    retryable_keywords = [
-        "timeout",
-        "connection",
-        "timed out",
-        "temporarily unavailable",
-        "max retries exceeded",
-        "connection aborted"
-    ]
-
-    return any(k in error for k in retryable_keywords)
+semaphore    = asyncio.Semaphore(5)
+IDLE_TIMEOUT = 300   # 5 menit
+RETRY_DELAY  = 30    # detik sebelum retry chunk failed
 
 
-def should_retry(chunk) -> bool:
-    """Tentukan apakah chunk failed boleh dicoba lagi"""
-    updated_at = chunk.get("updated_at")
-
-    if not updated_at:
-        return True
-
-    try:
-        updated_time = datetime.fromisoformat(updated_at)
-    except Exception:
-        return True
-
-    now = datetime.utcnow()
-
-    # delay retry
-    if now - updated_time < timedelta(seconds=RETRY_DELAY_SECONDS):
-        return False
-
-    # stop retry kalau sudah terlalu lama (biar nggak infinite)
-    if now - updated_time > timedelta(minutes=MAX_RETRY_WINDOW_MINUTES):
-        return False
-
-    return True
+def _build_webhook_url() -> str | None:
+    """
+    Susun URL webhook AssemblyAI dari CALLBACK_URL.
+    Contoh: https://app.railway.app/callback/assemblyai
+    """
+    if not CALLBACK_URL:
+        return None
+    base = CALLBACK_URL.rstrip("/")
+    # Hapus suffix /callback lama jika ada
+    if base.endswith("/callback"):
+        base = base[: -len("/callback")]
+    return f"{base}/callback/assemblyai"
 
 
-async def process_chunk(chunk):
+async def process_chunk(chunk: dict):
     async with semaphore:
-        chunk_id = chunk["id"]
-        path = chunk["chunk_path"]
+        chunk_id  = chunk["id"]
+        path      = chunk["chunk_path"]
         report_id = chunk["report_id"]
+        chunk_idx = chunk.get("chunk_index", 0)
 
         try:
-            logger.info(f"[WORKER] Processing chunk {chunk_id}")
+            logger.info(f"[WORKER] Processing chunk {chunk_id} (index={chunk_idx})")
 
-            # 🔒 LOCK CHUNK
-            updated = supabase.table("audio_chunks").update({
-                "status": "processing"
-            }).eq("id", chunk_id).eq("status", chunk["status"]).execute()
-
+            # ── Optimistic lock ──────────────────────────────────────
+            now_iso = datetime.utcnow().isoformat()
+            updated = (
+                supabase.table("audio_chunks")
+                .update({"status": "processing", "updated_at": now_iso})
+                .eq("id", chunk_id)
+                .eq("status", chunk["status"])
+                .execute()
+            )
             if not updated.data:
                 logger.warning(f"[WORKER] Chunk {chunk_id} already taken")
                 return
 
-            # 🔄 update report → processing
+            # Tandai report sedang diproses
             supabase.table("reports").update({
                 "status": "processing"
             }).eq("id", report_id).eq("status", "chunking").execute()
 
-            # ❗ cek file
             if not os.path.exists(path):
                 raise Exception(f"File not found: {path}")
 
-            # 🚀 kirim ke STT
-            res = send_to_stt_file(path)
-            logger.info(f"[STT RESPONSE] chunk_id={chunk_id} response={res}")
+            # ── Upload ke AssemblyAI CDN ─────────────────────────────
+            audio_url = upload_file_to_aai(path)
 
-            if not isinstance(res, dict):
-                raise Exception(f"Invalid response format: {res}")
+            # ── Hitung offset dari chunk_index ───────────────────────
+            offset_sec  = chunk_idx * CHUNK_DURATION_SEC
+            webhook_url = _build_webhook_url()
 
-            if "error" in res:
-                raise Exception(res["error"])
-            
-            logger.info(f"[SEND STT] chunk_id={chunk_id} path={path}")
-            task_id = res.get("task_id")
-            logger.info(f"[TASK ID] chunk_id={chunk_id} task_id={task_id}")
+            logger.info(
+                f"[WORKER] chunk={chunk_id} idx={chunk_idx} "
+                f"offset={offset_sec}s webhook={webhook_url}"
+            )
 
-            if not task_id:
-                raise Exception(f"No task_id from STT: {res}")
+            # ── Submit ke AssemblyAI (webhook mode) ──────────────────
+            transcript_id = submit_transcript_aai(
+                audio_url=audio_url,
+                language_code=STT_LANGUAGE,
+                webhook_url=webhook_url,
+            )
 
-            # ✅ update task_id
+            # Simpan transcript_id sebagai task_id
             supabase.table("audio_chunks").update({
-                "task_id": task_id
+                "task_id":    transcript_id,
+                "updated_at": datetime.utcnow().isoformat(),
             }).eq("id", chunk_id).execute()
 
-            logger.info(f"[STT TASK CREATED] chunk={chunk_id} task_id={task_id}")
+            logger.info(
+                f"[STT SUBMITTED] chunk={chunk_id} idx={chunk_idx} "
+                f"tid={transcript_id}"
+            )
 
         except Exception as e:
             error_msg = str(e)
             logger.error(f"[WORKER ERROR] Chunk {chunk_id}: {error_msg}")
-
             supabase.table("audio_chunks").update({
-                "status": "failed",
-                "error_message": error_msg
+                "status":        "failed",
+                "error_message": error_msg,
+                "updated_at":    datetime.utcnow().isoformat(),
             }).eq("id", chunk_id).execute()
 
 
+def _should_retry(chunk: dict) -> bool:
+    """Cek apakah chunk failed sudah cukup lama untuk dicoba lagi."""
+    updated_at = chunk.get("updated_at")
+    if not updated_at:
+        return True
+
+    try:
+        t = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
+        # Normalisasi ke naive UTC
+        if t.tzinfo is not None:
+            t = t.astimezone(timezone.utc).replace(tzinfo=None)
+        age = (datetime.utcnow() - t).total_seconds()
+        return age >= RETRY_DELAY
+    except Exception:
+        return True
+
+
 async def run_worker():
-    logger.info("[WORKER] Started")
+    logger.info("[WORKER] Started (AssemblyAI mode)")
 
     idle_since = datetime.utcnow()
 
     while True:
         try:
-            res = supabase.table("audio_chunks") \
-                .select("*") \
-                .in_("status", ["pending", "failed"]) \
-                .limit(5) \
+            res = (
+                supabase.table("audio_chunks")
+                .select("*")
+                .in_("status", ["pending", "failed"])
+                .limit(5)
                 .execute()
-
+            )
             chunks = res.data or []
 
             if chunks:
                 idle_since = datetime.utcnow()
-
                 logger.info(f"[WORKER] Found {len(chunks)} chunks")
 
-                filtered_chunks = []
+                filtered = [
+                    c for c in chunks
+                    if c["status"] == "pending"
+                    or (c["status"] == "failed" and _should_retry(c))
+                ]
 
-                for c in chunks:
-                    if c["status"] == "pending":
-                        filtered_chunks.append(c)
-                    elif c["status"] == "failed" and should_retry(c):
-                        filtered_chunks.append(c)
-
-                if filtered_chunks:
-                    await asyncio.gather(
-                        *[process_chunk(c) for c in filtered_chunks]
-                    )
+                if filtered:
+                    await asyncio.gather(*[process_chunk(c) for c in filtered])
 
             else:
                 idle_time = (datetime.utcnow() - idle_since).total_seconds()
-
                 if idle_time > IDLE_TIMEOUT:
                     logger.info("[WORKER] Idle timeout reached, stopping worker")
                     break

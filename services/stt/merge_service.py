@@ -1,6 +1,5 @@
 from repositories.supabase_client import supabase
 from services.storage.storage_service import upload_transcript
-from services.cleanup_service import cleanup_chunks
 from core.logger import logger
 
 
@@ -76,9 +75,6 @@ def merge_transcript(report_id: int):
         logger.info(
             f"[REPORT UPDATED] report_id={report_id}"
         )
-
-        # 🧹 cleanup local chunk files
-        cleanup_chunks(report_id)
 
         logger.info(
             f"[MERGE SUCCESS] report_id={report_id}"

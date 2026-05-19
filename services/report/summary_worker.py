@@ -6,19 +6,101 @@ from repositories.supabase_client import supabase
 from services.storage.storage_service import download_transcript, upload_summary
 from services.summarizer.summarizer import summarize_text
 from services.report.report_service import generate_combined_pdf
-from services.rps.rps_service import get_meeting_week, get_rps_for_week
+from services.cleanup_service import cleanup_chunks
+from services.rps.rps_service import (
+    get_meeting_week,
+    get_rps_for_week,
+    get_all_rps_for_matkul,
+    get_nama_matkul,
+)
 from services.rps.rag_analyzer import analyze_rps
+from services.activity.activity_analyzer import classify_activities
 from core.logger import logger
 
 
 # batasi concurrency
-semaphore = asyncio.Semaphore(2)
+semaphore    = asyncio.Semaphore(2)
 IDLE_TIMEOUT = 300  # 5 menit
+
+
+def _fetch_chunks(report_id: int) -> tuple[list[dict], float]:
+    """
+    Ambil semua chunk transkrip dari DB untuk satu report.
+    Return (chunks, total_duration_sec).
+
+    Jika AssemblyAI dipakai, setiap chunk juga memiliki kolom 'utterances' JSONB
+    yang digunakan oleh classify_activities() untuk mode diarization.
+    """
+    from services.activity.activity_analyzer import CHUNK_DURATION_SEC
+
+    res = (
+        supabase.table("audio_chunks")
+        .select("chunk_index, transcript, utterances")   # utterances = diarization data
+        .eq("report_id", report_id)
+        .eq("status", "done")
+        .order("chunk_index")
+        .execute()
+    )
+    chunks = res.data or []
+    total_duration_sec = len(chunks) * CHUNK_DURATION_SEC
+    return chunks, float(total_duration_sec)
+
+
+def _insert_activity_stats(report: dict, report_id: int, pertemuan_ke: int, activity_result: dict):
+    """
+    Simpan statistik aktivitas ke tabel activity_stats.
+    Kaitkan ke jadwal_kuliah melalui monitoring_id yang ada di reports.
+    """
+    try:
+        monitoring_id = report.get("monitoring_id")
+        jadwal_id     = None
+
+        # Ambil jadwal_id dari tabel monitoring
+        if monitoring_id:
+            mon_res = (
+                supabase.table("monitoring")
+                .select("jadwal_id")
+                .eq("id", monitoring_id)
+                .single()
+                .execute()
+            )
+            if mon_res.data:
+                jadwal_id = mon_res.data.get("jadwal_id")
+
+        payload = {
+            "report_id":           report_id,
+            "monitoring_id":       monitoring_id,
+            "jadwal_id":           jadwal_id,
+            "pertemuan_ke":        pertemuan_ke,
+            "tanggal":             str(report.get("tanggal")) if report.get("tanggal") else None,
+            "kode_matkul":         report.get("kode_matkul"),
+            "dominant_activity":   activity_result.get("dominant"),
+            "ceramah_pct":         activity_result.get("ceramah_pct"),
+            "tanya_jawab_pct":     activity_result.get("tanya_jawab_pct"),
+            "diskusi_pct":         activity_result.get("diskusi_pct"),
+            "diam_pct":            activity_result.get("diam_pct"),
+            "ceramah_sec":         activity_result.get("ceramah_sec"),
+            "tanya_jawab_sec":     activity_result.get("tanya_jawab_sec"),
+            "diskusi_sec":         activity_result.get("diskusi_sec"),
+            "diam_sec":            activity_result.get("diam_sec"),
+            "activity_timeline":   activity_result.get("activity_timeline", []),
+        }
+
+        supabase.table("activity_stats").insert(payload).execute()
+        logger.info(
+            f"[ACTIVITY STATS] Saved | report={report_id} "
+            f"pertemuan={pertemuan_ke} jadwal_id={jadwal_id} "
+            f"dominant={activity_result.get('dominant')}"
+        )
+
+    except Exception as e:
+        # Soft-fail: jangan hentikan pipeline karena insert stats gagal
+        logger.warning(f"[ACTIVITY STATS] Insert failed (non-fatal): {e}")
 
 
 async def process_summary(report):
     async with semaphore:
-        report_id = report["id"]
+        report_id  = report["id"]
         local_path = None
 
         try:
@@ -34,13 +116,12 @@ async def process_summary(report):
             )
 
             path = fresh.data.get("transcript_path")
-
             if not path:
                 raise Exception("Transcript path not found")
 
             transcript = download_transcript(path)
 
-            # ── 2. Hitung minggu pertemuan ───────────────────────────
+            # ── 2. Hitung pertemuan_ke dari tanggal ──────────────────
             tanggal     = report.get("tanggal")
             kode_matkul = report.get("kode_matkul")
 
@@ -52,21 +133,44 @@ async def process_summary(report):
             pertemuan_ke = get_meeting_week(str(tanggal))
             logger.info(f"[RAG] tanggal={tanggal} → pertemuan_ke={pertemuan_ke}")
 
-            # ── 3. Fetch RPS pertemuan ini ───────────────────────────
-            rps = get_rps_for_week(kode_matkul, pertemuan_ke)
+            # ── 3. Fetch SEMUA RPS untuk matkul ini ─────────────────
+            rps_semua = get_all_rps_for_matkul(kode_matkul)
 
-            if not rps:
+            if not rps_semua:
                 raise Exception(
-                    f"RPS pertemuan ke-{pertemuan_ke} untuk '{kode_matkul}' belum tersedia. "
+                    f"Tidak ada data RPS untuk '{kode_matkul}'. "
                     f"Harap isi tabel rps_pertemuan terlebih dahulu."
                 )
 
-            # ── 4. Summarize + Analisis RPS secara PARALEL ───────────
-            logger.info(f"[SUMMARY+RAG] Running parallel Gemini calls | report={report_id}")
+            pertemuan_numbers = [r.get("pertemuan_ke") for r in rps_semua]
+            if pertemuan_ke not in pertemuan_numbers:
+                raise Exception(
+                    f"RPS pertemuan ke-{pertemuan_ke} untuk '{kode_matkul}' belum tersedia. "
+                    f"Pertemuan yang ada: {sorted(pertemuan_numbers)}"
+                )
 
-            summary_result, analysis_raw = await asyncio.gather(
-                asyncio.to_thread(summarize_text, transcript),
-                asyncio.to_thread(analyze_rps, transcript, rps, pertemuan_ke),
+            rps_target = next(
+                (r for r in rps_semua if r.get("pertemuan_ke") == pertemuan_ke), {}
+            )
+
+            # ── 4. Fetch nama lengkap mata kuliah ────────────────────
+            nama_matkul = get_nama_matkul(kode_matkul)
+
+            # ── 5. Fetch chunks untuk klasifikasi aktivitas ──────────
+            chunks, total_duration_sec = _fetch_chunks(report_id)
+
+            logger.info(
+                f"[SUMMARY WORKER] "
+                f"matkul={nama_matkul} pertemuan={pertemuan_ke} "
+                f"chunks={len(chunks)} duration={total_duration_sec:.0f}s"
+            )
+
+            # ── 6. RONDE 1 — Summarize + Klasifikasi Aktivitas (paralel)
+            logger.info(f"[RONDE 1] summarize + classify_activities | report={report_id}")
+
+            summary_result, activity_result = await asyncio.gather(
+                asyncio.to_thread(summarize_text, transcript, nama_matkul),
+                asyncio.to_thread(classify_activities, chunks, total_duration_sec),
             )
 
             # Validasi summary
@@ -81,53 +185,117 @@ async def process_summary(report):
                     or ""
                 )
 
-            # Validasi analisis RPS
+            # Aktivitas — soft fail (tidak stop pipeline)
+            if not activity_result.get("success"):
+                logger.warning(
+                    f"[ACTIVITY WARN] Klasifikasi gagal (dilanjutkan tanpa aktivitas): "
+                    f"{activity_result.get('error')}"
+                )
+                activity_result = None
+
+            # ── 7. RONDE 2 — Analisis RPS + Metode (menggunakan activity_summary)
+            logger.info(f"[RONDE 2] analyze_rps | report={report_id}")
+
+            analysis_raw = await asyncio.to_thread(
+                analyze_rps,
+                transcript,
+                rps_semua,
+                pertemuan_ke,
+                activity_result,   # None jika aktivitas gagal
+            )
+
             if not analysis_raw.get("success"):
                 raise Exception(analysis_raw.get("error", "Analisis RPS gagal"))
 
-            # ── 5. Susun dict analisis lengkap untuk PDF ─────────────
+            # ── 8. Susun dict analisis lengkap untuk PDF ─────────────
             analysis = {
-                "pertemuan_ke":  pertemuan_ke,
-                "materi_pembelajaran": rps.get("materi_pembelajaran", "-"),
-                "kesesuaian":    analysis_raw.get("kesesuaian", "-"),
-                "status_waktu":  analysis_raw.get("status_waktu", "-"),
-                "penjelasan":    analysis_raw.get("penjelasan", "-"),
+                "pertemuan_ke":         pertemuan_ke,
+                "materi_pembelajaran":  rps_target.get("materi_pembelajaran", "-"),
+                "pengalaman_rps":       rps_target.get("pengalaman_pembelajaran_mahasiswa", "-"),
+                "kesesuaian":           analysis_raw.get("kesesuaian", "-"),
+                "pertemuan_terdeteksi": analysis_raw.get("pertemuan_terdeteksi", "-"),
+                "status_waktu":         analysis_raw.get("status_waktu", "-"),
+                "penjelasan":           analysis_raw.get("penjelasan", "-"),
+                "metode_dominan":       analysis_raw.get("metode_dominan", "-"),
+                "kesesuaian_metode":    analysis_raw.get("kesesuaian_metode", "-"),
+                "penjelasan_metode":    analysis_raw.get("penjelasan_metode", "-"),
+                # aktivitas summary (untuk bar di PDF)
+                "activity":             activity_result,
             }
 
-            # ── 6. Generate PDF 2 halaman ────────────────────────────
+            # ── 9. Generate PDF 2 halaman ────────────────────────────
             os.makedirs("temp", exist_ok=True)
             local_path = f"temp/report_{report_id}.pdf"
 
-            generate_combined_pdf(summary_text_val, analysis, local_path)
+            generate_combined_pdf(
+                summary_text_val,
+                analysis,
+                local_path,
+                nama_matkul=nama_matkul,
+                pertemuan_ke=pertemuan_ke,
+            )
 
-            # ── 7. Upload & update DB ────────────────────────────────
+            # ── 10. Upload PDF ────────────────────────────────────────
             storage_path = f"report_{report_id}.pdf"
-
             logger.info(f"[UPLOAD] uploading combined PDF → {storage_path}")
             upload_summary(local_path, storage_path)
 
-            supabase.table("reports").update({
-                "status": "done",
-                "summary_path": storage_path,
-                "error_message": None,
-            }).eq("id", report_id).execute()
+            # ── 11. Update DB ─────────────────────────────────────────
+            update_payload: dict = {
+                "status":         "done",
+                "summary_path":   storage_path,
+                "error_message":  None,
+            }
+
+            if activity_result:
+                # Simpan ringkasan aktivitas (tanpa activity_timeline panjang)
+                update_payload["activity_summary"] = {
+                    "dominant":         activity_result.get("dominant"),
+                    "ceramah_pct":      activity_result.get("ceramah_pct"),
+                    "tanya_jawab_pct":  activity_result.get("tanya_jawab_pct"),
+                    "diskusi_pct":      activity_result.get("diskusi_pct"),
+                    "diam_pct":         activity_result.get("diam_pct"),
+                    "ceramah_sec":      activity_result.get("ceramah_sec"),
+                    "tanya_jawab_sec":  activity_result.get("tanya_jawab_sec"),
+                    "diskusi_sec":      activity_result.get("diskusi_sec"),
+                    "diam_sec":         activity_result.get("diam_sec"),
+                    "activity_timeline": activity_result.get("activity_timeline", []),
+                }
+
+            supabase.table("reports").update(update_payload).eq("id", report_id).execute()
+
+            # ── 12. Simpan ke activity_stats ──────────────────────────
+            if activity_result:
+                _insert_activity_stats(report, report_id, pertemuan_ke, activity_result)
 
             logger.info(
                 f"[SUMMARY DONE] Report {report_id} | "
-                f"pertemuan={pertemuan_ke} kesesuaian={analysis['kesesuaian']}"
+                f"target=pertemuan-{pertemuan_ke} "
+                f"terdeteksi=pertemuan-{analysis['pertemuan_terdeteksi']} "
+                f"status={analysis['status_waktu']} "
+                f"kesesuaian={analysis['kesesuaian']} "
+                f"kesesuaian_metode={analysis['kesesuaian_metode']} "
+                f"dominant={analysis['metode_dominan']}"
             )
 
         except Exception as e:
             logger.error(f"[SUMMARY ERROR] Report {report_id}: {e}", exc_info=True)
 
             supabase.table("reports").update({
-                "status": "failed",
+                "status":        "failed",
                 "error_message": str(e),
             }).eq("id", report_id).execute()
 
         finally:
             if local_path and os.path.exists(local_path):
                 os.remove(local_path)
+
+            # Hapus audio_chunks dari DB setelah semua data sudah dipakai
+            # (transcript sudah di-upload, utterances sudah dipakai classify_activities)
+            try:
+                cleanup_chunks(report_id)
+            except Exception as ce:
+                logger.warning(f"[CLEANUP WARN] report={report_id}: {ce}")
 
 
 async def run_summary_worker():
@@ -149,7 +317,7 @@ async def run_summary_worker():
 
             if reports:
                 idle_since = datetime.utcnow()
-                tasks = []
+                tasks      = []
 
                 for r in reports:
                     # optimistic lock
@@ -162,7 +330,7 @@ async def run_summary_worker():
                     )
 
                     if not updated.data:
-                        continue  # another worker already grabbed it
+                        continue
 
                     tasks.append(process_summary(r))
 

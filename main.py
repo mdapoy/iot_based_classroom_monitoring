@@ -9,7 +9,6 @@ from api.v1.routes import (
     auth_routes,
     csv_routes,
     monitoring_routes,
-    record_routes,
     report_routes,
     rps_routes,
     scheduled_routes,
@@ -48,7 +47,6 @@ app.add_middleware(
 
 app.include_router(auth_routes.router)
 app.include_router(csv_routes.router)
-app.include_router(record_routes.router)
 app.include_router(scheduled_routes.router)
 app.include_router(stt_routes.router)
 app.include_router(summary_routes.router)

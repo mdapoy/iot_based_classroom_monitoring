@@ -83,3 +83,50 @@ def get_rps_for_week(kode_matkul: str, pertemuan_ke: int) -> dict | None:
             f"[RPS] Not found | kode_matkul={kode_matkul} pertemuan={pertemuan_ke} | {e}"
         )
         return None
+
+
+def get_all_rps_for_matkul(kode_matkul: str) -> list[dict]:
+    """
+    Ambil SEMUA pertemuan RPS untuk satu mata kuliah, urut berdasarkan pertemuan_ke.
+    Digunakan untuk menyusun konteks kurikulum lengkap pada prompt RAG.
+    Return list kosong jika tidak ditemukan.
+    """
+    try:
+        res = (
+            supabase.table("rps_pertemuan")
+            .select("*")
+            .eq("kode_matkul", kode_matkul)
+            .order("pertemuan_ke")
+            .execute()
+        )
+        return res.data or []
+
+    except Exception as e:
+        logger.warning(
+            f"[RPS] get_all failed | kode_matkul={kode_matkul} | {e}"
+        )
+        return []
+
+
+def get_nama_matkul(kode_matkul: str) -> str:
+    """
+    Ambil nama lengkap mata kuliah dari tabel jadwal_kuliah berdasarkan kode_matkul.
+    Digunakan untuk membuat prompt summarizer dan judul PDF yang dinamis.
+    Fallback ke kode_matkul jika tidak ditemukan di tabel jadwal.
+    """
+    try:
+        res = (
+            supabase.table("jadwal_kuliah")
+            .select("mata_kuliah")
+            .eq("kode_mata_kuliah", kode_matkul)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0]["mata_kuliah"]
+        logger.warning(f"[RPS] nama_matkul not found | kode_matkul={kode_matkul}, fallback ke kode")
+        return kode_matkul
+
+    except Exception as e:
+        logger.warning(f"[RPS] get_nama_matkul failed | kode_matkul={kode_matkul} | {e}")
+        return kode_matkul

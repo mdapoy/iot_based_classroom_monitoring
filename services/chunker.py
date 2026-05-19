@@ -2,8 +2,17 @@
 
 import os
 import subprocess
+from dotenv import load_dotenv
 
-def split_audio(file_path, chunk_duration=600, report_id=None):
+load_dotenv()
+
+CHUNK_DURATION_SEC = int(os.getenv("CHUNK_DURATION_SEC", "300"))
+
+
+def split_audio(file_path, chunk_duration=None, report_id=None):
+    if chunk_duration is None:
+        chunk_duration = CHUNK_DURATION_SEC
+
 
     output_dir = f"chunks/{report_id}" if report_id else "chunks"
     os.makedirs(output_dir, exist_ok=True)

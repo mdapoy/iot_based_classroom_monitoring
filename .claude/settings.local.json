@@ -16,7 +16,25 @@
       "Bash(/c/Users/Dapoy/miniconda3/envs/ai_project/python.exe -c ' *)",
       "Bash(/c/Users/Dapoy/miniconda3/Scripts/conda.exe install *)",
       "Bash(grep -r \"axios\" /c/Temp/fe/src/ --include=\"*.tsx\" --include=\"*.ts\" -l)",
-      "Bash(mkdir -p /c/Temp/fe2)"
+      "Bash(mkdir -p /c/Temp/fe2)",
+      "Bash(python3 -c ' *)",
+      "Bash(findstr /n \"^@app\\\\.\" coba.py)",
+      "Bash(python coba.py --check)",
+      "Bash(python3 -m py_compile \"C:\\\\TUGAS AKHIR\\\\coba.py\")",
+      "Bash(/c/Python313/python.exe -m py_compile \"C:/TUGAS AKHIR/coba.py\")",
+      "Bash(ls /c/Python313/)",
+      "WebSearch",
+      "WebFetch(domain:www.assemblyai.com)",
+      "Bash(tar -xf \"monitoring-dashboard \\(1\\).rar\" -C \"C:\\\\Users\\\\Dapoy\\\\Downloads\\\\fe_extract\")",
+      "Bash(where 7z)",
+      "Bash(where unrar *)",
+      "Bash(winget install *)",
+      "Bash(\"C:\\\\Program Files\\\\7-Zip\\\\7z.exe\" x \"C:\\\\Users\\\\Dapoy\\\\Downloads\\\\monitoring-dashboard \\(1\\).rar\" -o\"C:\\\\Users\\\\Dapoy\\\\Downloads\\\\fe_extract\" -y)",
+      "mcp__9ce48688-9413-47b8-bdf8-e1501011a10e__list_projects",
+      "mcp__9ce48688-9413-47b8-bdf8-e1501011a10e__list_tables",
+      "mcp__9ce48688-9413-47b8-bdf8-e1501011a10e__execute_sql",
+      "WebFetch(domain:railway.com)",
+      "WebFetch(domain:docs.railway.com)"
     ]
   }
 }

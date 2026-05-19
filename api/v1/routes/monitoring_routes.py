@@ -4,6 +4,7 @@ from utils.metadata_parser import parse_filename_monitoring
 from services.scheduler.scheduler import find_jadwal
 from repositories.supabase_client import supabase
 from api.v1.deps import require_admin, require_authenticated, optional_authenticated
+from core.logger import logger
 import time
 import os
 
@@ -54,11 +55,16 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
     # =========================
     # LOOP VIDEO
     # =========================
+    skipped_parse  = []
+    skipped_jadwal = []
+
     for video in videos:
 
         parsed = parse_filename_monitoring(video["name"])
 
         if not parsed:
+            skipped_parse.append(video["name"])
+            logger.warning(f"[SCAN] Gagal parse filename: {video['name']}")
             continue
 
         jadwal = find_jadwal(
@@ -68,6 +74,18 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
         )
 
         if not jadwal:
+            skipped_jadwal.append({
+                "file":        video["name"],
+                "kode_matkul": parsed["kode_matkul"],
+                "kode_dosen":  parsed["kode_dosen"],
+                "kelas":       parsed["kelas"],
+            })
+            logger.warning(
+                f"[SCAN] Jadwal tidak ditemukan: "
+                f"kode_matkul={parsed['kode_matkul']} "
+                f"kode_dosen={parsed['kode_dosen']} "
+                f"kelas={parsed['kelas']}"
+            )
             continue
 
         # =========================
@@ -126,10 +144,19 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
 
         inserted.append(video["name"])
 
+    logger.info(
+        f"[SCAN] Selesai | inserted={len(inserted)} "
+        f"skip_parse={len(skipped_parse)} "
+        f"skip_jadwal={len(skipped_jadwal)}"
+    )
+
     return {
-        "status": "scan selesai",
-        "videos_matched": inserted,
-        "new_data": len(inserted) > 0
+        "status":           "scan selesai",
+        "videos_found":     len(videos),
+        "videos_matched":   inserted,
+        "new_data":         len(inserted) > 0,
+        "skipped_parse":    skipped_parse,
+        "skipped_jadwal":   skipped_jadwal,
     }
     
 @router.get("/monitoring")

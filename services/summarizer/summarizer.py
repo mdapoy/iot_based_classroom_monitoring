@@ -59,23 +59,26 @@ def classify_gemini_error(error: str):
     return "unknown"
 
 
-def summarize_text(transcript: str, max_retries=3):
+def summarize_text(transcript: str, nama_matkul: str = "mata kuliah", max_retries=3):
 
-    logger.info(f"[SUMMARY] transcript_length={len(transcript)}")
+    logger.info(f"[SUMMARY] transcript_length={len(transcript)} nama_matkul={nama_matkul}")
 
-    prompt = f"""
-    Anda adalah seorang peringkas profesional yang bertugas untuk merangkum hasil dari rekaman suara di ruangan kuliah pada kelas Fisika 2.
+    prompt = f"""Anda adalah seorang peringkas profesional yang bertugas merangkum hasil rekaman kuliah pada kelas {nama_matkul}.
 
-    Aturan:
-    1. Ringkasan harus menggunakan bahasa yang jelas dan mudah dipahami.
-    2. Ringkasan harus mencakup poin-poin penting dari transkrip.
-    3. Ringkasan harus dalam bentuk paragraf.
-    4. Fokus pada konteks pembelajaran Fisika 2.
-    5. jangan gunakan karakter seperti ■ dan $.
+ATURAN WAJIB FORMAT:
+- Tulis dalam bentuk PARAGRAF mengalir, bukan daftar atau poin-poin.
+- DILARANG menggunakan penomoran (1. 2. 3. atau a. b. c.).
+- DILARANG menggunakan simbol markdown seperti **, *, #, -, atau karakter khusus lain (■, $, dll).
+- Jika perlu menyebut urutan, gunakan kata transisi: "pertama", "kedua", "selanjutnya", "kemudian", "terakhir".
+- Semua teks harus berupa kalimat biasa tanpa pemformatan apapun.
 
-    Berikut transkrip:
-    {transcript}
-    """
+ATURAN KONTEN:
+- Cakup poin-poin penting dari transkrip.
+- Gunakan bahasa yang jelas dan mudah dipahami.
+- Fokus pada konteks pembelajaran {nama_matkul}.
+
+Berikut transkrip:
+{transcript}"""
 
     for model_name in MODELS:
 
