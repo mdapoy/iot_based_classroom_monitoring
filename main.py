@@ -13,7 +13,10 @@ from api.v1.routes import (
     rps_routes,
     scheduled_routes,
     stt_routes,
-    summary_routes
+    summary_routes,
+    aktivitas_routes,
+    dashboard_routes,
+    kehadiran_routes,
 )
 
 origins = ["*"]
@@ -53,6 +56,9 @@ app.include_router(summary_routes.router)
 app.include_router(report_routes.router)
 app.include_router(rps_routes.router)
 app.include_router(monitoring_routes.router)
+app.include_router(aktivitas_routes.router)
+app.include_router(dashboard_routes.router)
+app.include_router(kehadiran_routes.router)
 
 # from fastapi import FastAPI
 

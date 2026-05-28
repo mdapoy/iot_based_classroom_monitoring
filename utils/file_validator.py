@@ -7,9 +7,3 @@ def validate_csv(file: UploadFile):
             status_code=400,
             detail="File harus format CSV"
         )
-
-    # if file.content_type != "text/csv":
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail="Hanya file CSV yang diperbolehkan"
-    #     )
