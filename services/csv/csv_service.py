@@ -1,23 +1,75 @@
 import pandas as pd
 from repositories.supabase_client import supabase
 
+REQUIRED_COLUMNS = {"hari", "kode_mata_kuliah", "nama_mata_kuliah", "dosen", "kelas", "shift"}
+
+
 def process_csv(file):
 
     df = pd.read_csv(file)
 
+    # Normalize nama kolom: lowercase + spasi → underscore
     df.columns = df.columns.str.lower().str.replace(" ", "_")
 
+    # ── Bug 5: Validasi kolom wajib ──────────────────────────────
+    missing = REQUIRED_COLUMNS - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"Kolom tidak ditemukan dalam CSV: {', '.join(sorted(missing))}"
+        )
+
+    # Rename kolom CSV → nama kolom DB
+    df = df.rename(columns={
+        "nama_mata_kuliah": "mata_kuliah",
+        "dosen":            "dosen_utama",
+    })
+
+    # Drop kolom yang tidak ada di DB
+    df = df.drop(columns=["jenis"], errors="ignore")
+
+    # Split kolom shift → jam_mulai, jam_selesai
     df[["jam_mulai", "jam_selesai"]] = df["shift"].str.split(" - ", expand=True)
-
     df = df.drop(columns=["shift"])
-
     df = df.fillna("")
 
     data = df.to_dict(orient="records")
 
-    supabase.table("jadwal_kuliah").insert(data).execute()
+    # ── Bug 4: Cek duplikat sebelum INSERT ───────────────────────
+    existing_rows = (
+        supabase.table("jadwal_kuliah")
+        .select("hari, kode_mata_kuliah, dosen_utama, kelas, jam_mulai")
+        .execute()
+        .data
+        or []
+    )
+
+    existing_keys = {
+        (
+            r.get("hari"),
+            r.get("kode_mata_kuliah"),
+            r.get("dosen_utama"),
+            r.get("kelas"),
+            r.get("jam_mulai"),
+        )
+        for r in existing_rows
+    }
+
+    new_data = [
+        row for row in data
+        if (
+            row.get("hari"),
+            row.get("kode_mata_kuliah"),
+            row.get("dosen_utama"),
+            row.get("kelas"),
+            row.get("jam_mulai"),
+        ) not in existing_keys
+    ]
+
+    if new_data:
+        supabase.table("jadwal_kuliah").insert(new_data).execute()
 
     return {
-        "status": "success",
-        "rows_inserted": len(data)
+        "status":        "success",
+        "rows_inserted": len(new_data),
+        "rows_skipped":  len(data) - len(new_data),
     }
