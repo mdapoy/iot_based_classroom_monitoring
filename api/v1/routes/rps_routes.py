@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from repositories.supabase_client import supabase
 from models.rps_schema import RPSRequest
 from api.v1.deps import optional_authenticated
+from utils.file_validator import validate_csv
 from core.logger import logger
+import pandas as pd
+import io
 
 router = APIRouter(prefix="/rps", tags=["rps"])
 
@@ -46,6 +49,100 @@ def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authent
         raise
     except Exception as e:
         logger.error(f"[RPS] Error saving: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload-csv")
+async def upload_rps_csv(
+    file: UploadFile = File(...),
+    user: dict = Depends(optional_authenticated),
+):
+    """
+    Upload RPS dari file CSV sekaligus.
+    Format kolom wajib:
+      kode_matkul, pertemuan_ke, materi_pembelajaran,
+      pengalaman_pembelajaran_mahasiswa
+    Duplikat (kode_matkul + pertemuan_ke) di-upsert (update).
+    """
+    validate_csv(file)
+
+    REQUIRED_COLUMNS = {
+        "kode_matkul",
+        "pertemuan_ke",
+        "materi_pembelajaran",
+        "pengalaman_pembelajaran_mahasiswa",
+    }
+
+    try:
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+
+        # Normalize nama kolom
+        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+
+        missing = REQUIRED_COLUMNS - set(df.columns)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kolom tidak ditemukan dalam CSV: {', '.join(sorted(missing))}"
+            )
+
+        df = df[list(REQUIRED_COLUMNS)].copy()
+        df = df.dropna(subset=["kode_matkul", "pertemuan_ke"])
+        df["pertemuan_ke"] = df["pertemuan_ke"].astype(int)
+        df = df.fillna("")
+
+        rows = df.to_dict(orient="records")
+
+        if not rows:
+            raise HTTPException(status_code=400, detail="CSV tidak memiliki baris data")
+
+        # Proses per-baris agar baris yang gagal dilaporkan
+        # tanpa menggagalkan seluruh upload
+        successful = []
+        skipped_rows = []
+
+        for row in rows:
+            try:
+                res = (
+                    supabase.table("rps_pertemuan")
+                    .upsert(row, on_conflict="kode_matkul,pertemuan_ke")
+                    .execute()
+                )
+                if res.data:
+                    successful.append(row)
+                else:
+                    skipped_rows.append({
+                        "kode_matkul":  row.get("kode_matkul"),
+                        "pertemuan_ke": row.get("pertemuan_ke"),
+                        "reason":       "Upsert tidak mengembalikan data",
+                    })
+            except Exception as row_err:
+                skipped_rows.append({
+                    "kode_matkul":  row.get("kode_matkul"),
+                    "pertemuan_ke": row.get("pertemuan_ke"),
+                    "reason":       str(row_err),
+                })
+
+        count = len(successful)
+
+        logger.info(
+            f"[RPS CSV] Uploaded | success={count} skipped={len(skipped_rows)} "
+            f"kode_matkul={df['kode_matkul'].unique().tolist()}"
+        )
+
+        return {
+            "status":        "success",
+            "message":       f"{count} baris RPS berhasil disimpan.",
+            "rows_upserted": count,
+            "skipped":       len(skipped_rows),
+            "errors":        skipped_rows,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[RPS CSV] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
