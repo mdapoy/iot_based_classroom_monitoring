@@ -75,7 +75,21 @@ async def upload_rps_csv(
 
     try:
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+
+        # Hitung total baris data sebelum parsing (untuk deteksi baris yang di-skip)
+        raw_text     = contents.decode("utf-8", errors="replace")
+        total_lines  = sum(1 for l in raw_text.splitlines()[1:] if l.strip())
+
+        # on_bad_lines='skip' → baris yang field-nya tidak cocok (misal ada koma
+        # di dalam nilai yang tidak di-quote) dilewati, tidak crash keseluruhan
+        df = pd.read_csv(io.BytesIO(contents), on_bad_lines="skip")
+
+        auto_skipped = total_lines - len(df)
+        if auto_skipped > 0:
+            logger.warning(
+                f"[RPS CSV] {auto_skipped} baris di-skip otomatis "
+                f"(format tidak valid — kemungkinan koma di dalam nilai field)"
+            )
 
         # Normalize nama kolom
         df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
@@ -131,12 +145,24 @@ async def upload_rps_csv(
             f"kode_matkul={df['kode_matkul'].unique().tolist()}"
         )
 
+        total_skipped = len(skipped_rows) + auto_skipped
+        skip_errors   = skipped_rows.copy()
+        if auto_skipped > 0:
+            skip_errors.append({
+                "kode_matkul":  "-",
+                "pertemuan_ke": "-",
+                "reason": (
+                    f"{auto_skipped} baris di-skip otomatis karena format tidak valid "
+                    f"(kemungkinan koma di dalam nilai field yang tidak di-quote)"
+                ),
+            })
+
         return {
             "status":        "success",
             "message":       f"{count} baris RPS berhasil disimpan.",
             "rows_upserted": count,
-            "skipped":       len(skipped_rows),
-            "errors":        skipped_rows,
+            "skipped":       total_skipped,
+            "errors":        skip_errors,
         }
 
     except HTTPException:
