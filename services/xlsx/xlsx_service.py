@@ -4,21 +4,21 @@ from repositories.supabase_client import supabase
 REQUIRED_COLUMNS = {"hari", "kode_mata_kuliah", "nama_mata_kuliah", "dosen", "kelas", "shift"}
 
 
-def process_csv(file):
+def process_xlsx(file):
 
-    df = pd.read_csv(file)
+    df = pd.read_excel(file, engine="openpyxl")
 
     # Normalize nama kolom: lowercase + spasi → underscore
     df.columns = df.columns.str.lower().str.replace(" ", "_")
 
-    # ── Bug 5: Validasi kolom wajib ──────────────────────────────
+    # Validasi kolom wajib
     missing = REQUIRED_COLUMNS - set(df.columns)
     if missing:
         raise ValueError(
-            f"Kolom tidak ditemukan dalam CSV: {', '.join(sorted(missing))}"
+            f"Kolom tidak ditemukan dalam file: {', '.join(sorted(missing))}"
         )
 
-    # Rename kolom CSV → nama kolom DB
+    # Rename kolom Excel → nama kolom DB
     df = df.rename(columns={
         "nama_mata_kuliah": "mata_kuliah",
         "dosen":            "dosen_utama",
@@ -34,7 +34,7 @@ def process_csv(file):
 
     data = df.to_dict(orient="records")
 
-    # ── Bug 4: Cek duplikat sebelum INSERT ───────────────────────
+    # Cek duplikat sebelum INSERT
     existing_rows = (
         supabase.table("jadwal_kuliah")
         .select("hari, kode_mata_kuliah, dosen_utama, kelas, jam_mulai")

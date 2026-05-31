@@ -1,21 +1,22 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
-from services.csv.csv_service import process_csv
-from utils.file_validator import validate_csv
+from services.xlsx.xlsx_service import process_xlsx
+from utils.file_validator import validate_xlsx
 from api.v1.deps import require_admin
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-@router.post("/csv")
-async def upload_csv(
+
+@router.post("/xlsx")
+async def upload_xlsx(
     file: UploadFile = File(...),
     user: dict = Depends(require_admin)
 ):
-    validate_csv(file)
+    validate_xlsx(file)
 
     file.file.seek(0)
 
     try:
-        result = process_csv(file.file)
+        result = process_xlsx(file.file)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
