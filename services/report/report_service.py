@@ -4,8 +4,12 @@ from docx import Document
 from repositories.supabase_client import supabase
 from datetime import datetime
 from reportlab.platypus import SimpleDocTemplate, Paragraph, PageBreak, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.pdfgen import canvas as rl_canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.colors import HexColor, white
+from reportlab.lib.enums import TA_JUSTIFY
 
 TABLE = "reports"
 
@@ -108,154 +112,402 @@ def generate_combined_pdf(
     output_path: str,
     nama_matkul: str = "MATA KULIAH",
     pertemuan_ke: int = 0,
+    kode_kelas: str = "",
+    tanggal: str = "",
 ) -> str:
     """
-    Buat PDF 2 halaman:
-      Halaman 1 — Ringkasan materi (judul dinamis sesuai matkul & pertemuan)
-      Halaman 2 — Analisis kesesuaian RPS:
-                  A. Kesesuaian Materi
-                  B. Aktivitas Pembelajaran
-                  C. Kesesuaian Metode Pembelajaran
+    Generate PDF laporan 2 halaman — template profesional Clactify:
+      Hal 1 — Header · Info Card · Section A (Ringkasan) · Section B (Kesesuaian RPS)
+      Hal 2 — Section C (Aktivitas + Progress Bar) · Section D (Kesesuaian Metode)
+
+    Menggunakan ReportLab Canvas langsung (bukan Platypus) untuk kontrol layout penuh.
     """
     dir_name = os.path.dirname(output_path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
 
-    doc    = SimpleDocTemplate(output_path)
-    styles = getSampleStyleSheet()
-    content = []
+    PAGE_W, PAGE_H = A4   # 595.28 x 841.89 pt
+    ML = 50.0             # margin left
+    MR = PAGE_W - 50.0    # margin right
+    CW = MR - ML          # content width ≈ 495 pt
 
-    # ── HALAMAN 1: RINGKASAN ────────────────────────────────────────
-    judul = f"RINGKASAN MATERI {nama_matkul.upper()} - PERTEMUAN KE-{pertemuan_ke}"
-    content.append(Paragraph(f"<b>{judul}</b>", styles["Title"]))
-    content.append(Spacer(1, 0.5 * cm))
-    content.append(Paragraph(_md_to_rl(summary), styles["BodyText"]))
+    # ── Palette ──────────────────────────────────────────────────────
+    C_PRI  = HexColor("#7B1C2E")   # Telkom dark red
+    C_GOLD = HexColor("#C8A84B")   # diskusi gold
+    C_GRN  = HexColor("#2E7D32")   # sesuai green
+    C_LBL  = HexColor("#999999")   # muted label
+    C_BG   = HexColor("#F5F5F5")   # card background
+    C_BDR  = HexColor("#DDDDDD")   # card border
+    C_TXT  = HexColor("#1A1A1A")   # body text
+    C_BLU  = HexColor("#1976D2")   # tanya jawab blue
 
-    content.append(PageBreak())
+    # ── ParagraphStyle factory ───────────────────────────────────────
+    _idx = [0]
+    def _ps(**kw):
+        _idx[0] += 1
+        d = dict(name=f"_clactify_{_idx[0]}", fontName="Helvetica",
+                 fontSize=9, leading=13, textColor=C_TXT,
+                 spaceAfter=0, spaceBefore=0)
+        d.update(kw)
+        return ParagraphStyle(**d)
 
-    # ── HALAMAN 2: ANALISIS ─────────────────────────────────────────
-    content.append(Paragraph("<b>ANALISIS KESESUAIAN RPS</b>", styles["Title"]))
-    content.append(Spacer(1, 0.3 * cm))
-    content.append(Paragraph(
-        f"Pertemuan ke-{analysis.get('pertemuan_ke', '-')}",
-        styles["Heading2"]
-    ))
-    content.append(Spacer(1, 0.3 * cm))
+    ST_BODY = _ps(fontSize=9, leading=13, alignment=TA_JUSTIFY)
+    ST_CAT  = _ps(fontSize=8.5, leading=13, alignment=TA_JUSTIFY)
 
-    # ── A. KESESUAIAN MATERI ────────────────────────────────────────
-    content.append(Paragraph("<b>A. Kesesuaian Materi</b>", styles["Heading3"]))
-    content.append(Spacer(1, 0.15 * cm))
-    content.append(Paragraph(
-        f"<b>Materi Pembelajaran RPS  :</b> {_md_to_rl(analysis.get('materi_pembelajaran', '-'))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.1 * cm))
-    content.append(Paragraph(
-        f"<b>Kesesuaian Materi        :</b> {_md_to_rl(analysis.get('kesesuaian', '-'))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.1 * cm))
-    content.append(Paragraph(
-        f"<b>Pertemuan Terdeteksi     :</b> ke-{_md_to_rl(str(analysis.get('pertemuan_terdeteksi', '-')))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.1 * cm))
-    content.append(Paragraph(
-        f"<b>Status Waktu             :</b> {_md_to_rl(analysis.get('status_waktu', '-'))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.1 * cm))
-    content.append(Paragraph(
-        f"<b>Penjelasan               :</b> {_md_to_rl(analysis.get('penjelasan', '-'))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.35 * cm))
+    # ── Helper: draw wrapped paragraph, returns new y (bottom) ───────
+    def _para(c, txt, st, x, y, w):
+        p = Paragraph(txt or "-", st)
+        _, h = p.wrap(w, 9999)
+        p.drawOn(c, x, y - h)
+        return y - h
 
-    # ── B. AKTIVITAS PEMBELAJARAN ───────────────────────────────────
-    activity = analysis.get("activity")
-    content.append(Paragraph("<b>B. Aktivitas Pembelajaran</b>", styles["Heading3"]))
-    content.append(Spacer(1, 0.15 * cm))
+    # ── Helper: section header bar with letter badge ─────────────────
+    def _sec_hdr(c, badge, title, y):
+        H = 26
+        c.setFillColor(C_PRI)
+        c.rect(ML, y - H, CW, H, fill=1, stroke=0)
+        bs = 16
+        bx, by = ML + 7, y - H + (H - bs) / 2
+        c.setFillColor(white)
+        c.rect(bx, by, bs, bs, fill=1, stroke=0)
+        c.setFillColor(C_PRI)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(bx + bs / 2, by + 4, badge)
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(bx + bs + 8, y - H + 9, title)
+        return y - H - 6
 
-    if activity and activity.get("dominant"):
-        content.append(Paragraph(
-            f"<b>Aktivitas Dominan        :</b> {activity.get('dominant', '-')}",
-            styles["BodyText"]
-        ))
-        content.append(Spacer(1, 0.1 * cm))
-        content.append(Paragraph(
-            f"<b>Ceramah                  :</b> "
-            f"{activity.get('ceramah_pct', 0)}%  ({_fmt_sec(activity.get('ceramah_sec', 0))})",
-            styles["BodyText"]
-        ))
-        content.append(Spacer(1, 0.05 * cm))
-        content.append(Paragraph(
-            f"<b>Tanya Jawab              :</b> "
-            f"{activity.get('tanya_jawab_pct', 0)}%  ({_fmt_sec(activity.get('tanya_jawab_sec', 0))})",
-            styles["BodyText"]
-        ))
-        content.append(Spacer(1, 0.05 * cm))
-        content.append(Paragraph(
-            f"<b>Diskusi                  :</b> "
-            f"{activity.get('diskusi_pct', 0)}%  ({_fmt_sec(activity.get('diskusi_sec', 0))})",
-            styles["BodyText"]
-        ))
-        content.append(Spacer(1, 0.05 * cm))
-        content.append(Paragraph(
-            f"<b>Diam                     :</b> "
-            f"{activity.get('diam_pct', 0)}%  ({_fmt_sec(activity.get('diam_sec', 0))})",
-            styles["BodyText"]
-        ))
+    # ── Helper: 4-column info card ───────────────────────────────────
+    def _info_card(c, matkul, ptm, status, tgl, y):
+        H = 48
+        cw4 = CW / 4
+        c.setFillColor(white)
+        c.setStrokeColor(C_BDR)
+        c.setLineWidth(0.5)
+        c.rect(ML, y - H, CW, H, fill=1, stroke=1)
+        hdrs = ["MATA KULIAH", "PERTEMUAN", "STATUS WAKTU", "TANGGAL"]
+        vals = [matkul, f"Ke-{ptm}", status, tgl or "-"]
+        for i, (h, v) in enumerate(zip(hdrs, vals)):
+            cx = ML + i * cw4 + 8
+            if i > 0:
+                c.setStrokeColor(C_BDR)
+                c.line(ML + i * cw4, y - 3, ML + i * cw4, y - H + 3)
+            c.setFillColor(C_LBL)
+            c.setFont("Helvetica", 7)
+            c.drawString(cx, y - 13, h)
+            fc = (C_GRN if "tepat" in v.lower() else C_PRI) if h == "STATUS WAKTU" else C_TXT
+            c.setFillColor(fc)
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(cx, y - 34, v)
+        return y - H
 
-        # Detail timeline
-        timeline = activity.get("activity_timeline", [])
-        if timeline:
-            content.append(Spacer(1, 0.15 * cm))
-            content.append(Paragraph("<b>Detail Timeline:</b>", styles["BodyText"]))
-            content.append(Spacer(1, 0.05 * cm))
-            for seg in timeline:
-                def fmt_sec(s):
-                    s = int(s or 0)
-                    return f"{s // 60:02d}:{s % 60:02d}"
-                label = (
-                    f"  {fmt_sec(seg.get('start_sec', 0))} – "
-                    f"{fmt_sec(seg.get('end_sec', 0))}  "
-                    f"[{seg.get('activity', '-')}]  "
-                    f"{seg.get('description', '')}"
-                )
-                content.append(Paragraph(label, styles["BodyText"]))
-                content.append(Spacer(1, 0.04 * cm))
-    else:
-        content.append(Paragraph(
-            "Data aktivitas tidak tersedia.",
-            styles["BodyText"]
-        ))
+    # ── Helper: colored square + bold text (status indicator) ────────
+    def _badge_text(c, x, y, color, text, fsize=13):
+        SZ = 9
+        c.setFillColor(color)
+        c.rect(x, y + 2, SZ, SZ, fill=1, stroke=0)
+        c.setFillColor(color)
+        c.setFont("Helvetica-Bold", fsize)
+        c.drawString(x + SZ + 5, y, text)
 
-    content.append(Spacer(1, 0.35 * cm))
+    # ── Helper: single progress bar row ─────────────────────────────
+    def _pbar(c, label, pct, color, y):
+        LW, bh = 90, 11
+        bx = ML + LW
+        bw = CW - LW - 28
+        c.setFillColor(C_TXT)
+        c.setFont("Helvetica", 9)
+        c.drawString(ML, y, label)
+        c.setFillColor(HexColor("#EBEBEB"))
+        c.rect(bx, y - bh + 2, bw, bh, fill=1, stroke=0)
+        if pct > 0:
+            c.setFillColor(color)
+            c.rect(bx, y - bh + 2, bw * pct / 100, bh, fill=1, stroke=0)
+        c.setFillColor(C_TXT)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawRightString(MR, y, f"{pct}%")
+        return y - bh - 5
 
-    # ── C. KESESUAIAN METODE PEMBELAJARAN ──────────────────────────
-    content.append(Paragraph("<b>C. Kesesuaian Metode Pembelajaran</b>", styles["Heading3"]))
-    content.append(Spacer(1, 0.15 * cm))
-    content.append(Paragraph(
-        f"<b>Metode RPS (Pengalaman)  :</b> {_md_to_rl(analysis.get('pengalaman_rps', '-'))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.1 * cm))
-    content.append(Paragraph(
-        f"<b>Aktivitas Dominan Aktual :</b> {_md_to_rl(analysis.get('metode_dominan', '-'))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.1 * cm))
-    content.append(Paragraph(
-        f"<b>Kesesuaian Metode        :</b> {_md_to_rl(analysis.get('kesesuaian_metode', '-'))}",
-        styles["BodyText"]
-    ))
-    content.append(Spacer(1, 0.1 * cm))
-    content.append(Paragraph(
-        f"<b>Penjelasan               :</b> {_md_to_rl(analysis.get('penjelasan_metode', '-'))}",
-        styles["BodyText"]
-    ))
+    # ── Helper: box with left accent border (Catatan / Kesimpulan) ───
+    def _note_box(c, prefix, text, y):
+        PAD, ACC = 10, 4
+        iw  = CW - PAD * 2 - ACC
+        txt = (f"<b>{prefix}</b> " if prefix else "") + (text or "-")
+        p   = Paragraph(txt, ST_CAT)
+        _, th = p.wrap(iw, 9999)
+        bh  = th + PAD * 2
+        c.setFillColor(HexColor("#FFF9F5"))
+        c.setStrokeColor(C_BDR)
+        c.setLineWidth(0.5)
+        c.rect(ML, y - bh, CW, bh, fill=1, stroke=1)
+        c.setFillColor(C_PRI)
+        c.rect(ML, y - bh, ACC, bh, fill=1, stroke=0)
+        p.drawOn(c, ML + ACC + PAD, y - bh + PAD)
+        return y - bh
 
-    doc.build(content)
+    # ── Helper: footer ───────────────────────────────────────────────
+    def _footer(c, pg, tot):
+        c.setFillColor(C_LBL)
+        c.setFont("Helvetica", 7.5)
+        c.drawString(
+            ML, 28,
+            "Laporan ini dibuat secara otomatis oleh sistem Clactify -- Telkom University"
+        )
+        c.drawRightString(MR, 28, f"Hal. {pg} / {tot}")
+
+    # ── Helper: number to Indonesian word ───────────────────────────
+    def _ordinal(n):
+        W = {1:"Satu", 2:"Dua", 3:"Tiga", 4:"Empat", 5:"Lima",
+             6:"Enam", 7:"Tujuh", 8:"Delapan", 9:"Sembilan", 10:"Sepuluh",
+             11:"Sebelas", 12:"Dua Belas", 13:"Tiga Belas", 14:"Empat Belas",
+             15:"Lima Belas", 16:"Enam Belas"}
+        try:
+            return W.get(int(n), str(n))
+        except Exception:
+            return str(n)
+
+    # ── Unpack analysis ──────────────────────────────────────────────
+    act        = analysis.get("activity") or {}
+    kesesuaian = (analysis.get("kesesuaian")         or "-").strip()
+    status_wkt = (analysis.get("status_waktu")        or "-").strip()
+    ptm_det    = analysis.get("pertemuan_terdeteksi", pertemuan_ke)
+    penjelasan = analysis.get("penjelasan",           "-")
+    materi_rps = analysis.get("materi_pembelajaran",  "-")
+    peng_rps   = analysis.get("pengalaman_rps",       "-")
+    met_dom    = analysis.get("metode_dominan",        "-")
+    kes_met    = (analysis.get("kesesuaian_metode")   or "-").strip()
+    penj_met   = analysis.get("penjelasan_metode",    "-")
+
+    def _pct(k): return int(act.get(k, 0) or 0)
+    def _min(k): return round((act.get(k, 0) or 0) / 60)
+
+    cer_pct = _pct("ceramah_pct");     dis_pct = _pct("diskusi_pct")
+    tny_pct = _pct("tanya_jawab_pct"); dim_pct = _pct("diam_pct")
+    cer_min = _min("ceramah_sec");     dis_min = _min("diskusi_sec")
+    tny_min = _min("tanya_jawab_sec"); dim_min = _min("diam_sec")
+    tot_min = cer_min + dis_min + tny_min + dim_min
+    dominant = (act.get("dominant") or "CERAMAH").upper()
+
+    dom_c = {
+        "CERAMAH":    C_PRI,
+        "DISKUSI":    C_GOLD,
+        "TANYA JAWAB": C_BLU,
+        "DIAM":       HexColor("#757575"),
+    }.get(dominant, C_PRI)
+
+    is_sesuai = "sesuai" in kesesuaian.lower() and "tidak" not in kesesuaian.lower()
+    is_tepat  = "tepat"  in status_wkt.lower()
+    is_met_ok = "sesuai" in kes_met.lower()    and "tidak" not in kes_met.lower()
+
+    # ── Create canvas ────────────────────────────────────────────────
+    c = rl_canvas.Canvas(output_path, pagesize=A4)
+
+    # ════════════════════════ PAGE 1 ═════════════════════════════════
+    y = PAGE_H - 35
+
+    # Header row
+    c.setFillColor(C_PRI)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(ML, y, "UNIVERSITAS TELKOM")
+    c.setFillColor(C_LBL)
+    c.setFont("Helvetica", 8)
+    c.drawRightString(MR, y, "CLACTIFY -- CLASS ACTIVITY IDENTIFY")
+    y -= 22
+
+    # Title
+    c.setFillColor(C_TXT)
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(ML, y, "LAPORAN EVALUASI PEMBELAJARAN")
+    y -= 16
+
+    # Subtitle
+    kls = f"  |  {kode_kelas}" if kode_kelas else ""
+    c.setFillColor(HexColor("#666666"))
+    c.setFont("Helvetica", 8.5)
+    c.drawString(
+        ML, y,
+        f"Analisis Kesesuaian & Aktivitas Kelas  |  {nama_matkul}"
+        f"  |  Pertemuan ke-{pertemuan_ke}{kls}"
+    )
+    y -= 10
+
+    # Separator line
+    c.setStrokeColor(C_BDR)
+    c.setLineWidth(0.5)
+    c.line(ML, y, MR, y)
+    y -= 12
+
+    # Info card
+    y = _info_card(
+        c, nama_matkul, pertemuan_ke,
+        status_wkt.title() if status_wkt != "-" else "-",
+        tanggal, y
+    )
+    y -= 14
+
+    # ── Section A: Ringkasan ─────────────────────────────────────────
+    y = _sec_hdr(c, "A", "RINGKASAN MATERI PERKULIAHAN", y)
+    y -= 10
+    y = _para(c, _md_to_rl(summary or "-"), ST_BODY, ML, y, CW)
+    y -= 16
+
+    # ── Section B: Kesesuaian RPS ────────────────────────────────────
+    y = _sec_hdr(c, "B", "ANALISIS KESESUAIAN RPS", y)
+    y -= 10
+
+    GH  = 55          # grid cell height
+    HW  = CW / 2      # half width
+    GT  = y           # grid top anchor
+
+    # Draw all 4 cell borders first
+    for col in range(2):
+        for row in range(2):
+            cx = ML + col * HW
+            cy = GT - row * GH
+            c.setFillColor(C_BG)
+            c.setStrokeColor(C_BDR)
+            c.setLineWidth(0.5)
+            c.rect(cx, cy - GH, HW, GH, fill=1, stroke=1)
+
+    # Cell: top-left — Materi RPS
+    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.drawString(ML + 8, GT - 13, "MATERI PEMBELAJARAN RPS")
+    _para(c, materi_rps, _ps(fontSize=8.5, leading=12),
+          ML + 8, GT - 18, HW - 16)
+
+    # Cell: top-right — Kesesuaian materi
+    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.drawString(ML + HW + 8, GT - 13, "KESESUAIAN MATERI")
+    _badge_text(c, ML + HW + 8, GT - 40,
+                C_GRN if is_sesuai else C_PRI, kesesuaian.upper())
+
+    # Cell: bottom-left — Pertemuan terdeteksi
+    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.drawString(ML + 8, GT - GH - 13, "PERTEMUAN TERDETEKSI")
+    c.setFillColor(C_TXT); c.setFont("Helvetica-Bold", 12)
+    c.drawString(ML + 8, GT - GH - 35, f"Ke-{ptm_det} ({_ordinal(ptm_det)})")
+
+    # Cell: bottom-right — Status waktu
+    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.drawString(ML + HW + 8, GT - GH - 13, "STATUS WAKTU")
+    _badge_text(c, ML + HW + 8, GT - GH - 35,
+                C_GRN if is_tepat else C_PRI, status_wkt.upper())
+
+    y = GT - 2 * GH - 10
+
+    # Catatan Evaluator box
+    y = _note_box(c, "Catatan Evaluator:", penjelasan, y)
+
+    _footer(c, 1, 2)
+    c.showPage()
+
+    # ════════════════════════ PAGE 2 ═════════════════════════════════
+    y = PAGE_H - 10
+
+    # Running header — top accent line
+    c.setFillColor(C_PRI)
+    c.rect(ML, y - 4, CW, 4, fill=1, stroke=0)
+    y -= 4
+
+    # Running header — text
+    c.setFillColor(C_TXT)
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(
+        ML, y - 14,
+        f"LAPORAN EVALUASI PEMBELAJARAN  |  {nama_matkul.upper()}  --  PERTEMUAN KE-{pertemuan_ke}"
+    )
+    c.setFillColor(C_PRI)
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawRightString(MR, y - 14, "CLACTIFY")
+    y -= 26
+
+    # ── Section C: Aktivitas ─────────────────────────────────────────
+    y = _sec_hdr(c, "C", "AKTIVITAS PEMBELAJARAN", y)
+    y -= 14
+
+    # Dominant activity subtitle
+    dom_label = "AKTIVITAS DOMINAN  "
+    dw = c.stringWidth(dom_label, "Helvetica", 9)
+    c.setFillColor(C_LBL); c.setFont("Helvetica", 9)
+    c.drawString(ML, y, dom_label)
+    c.setFillColor(dom_c); c.setFont("Helvetica-Bold", 9)
+    c.drawString(ML + dw, y, dominant)
+    y -= 18
+
+    # Progress bars
+    for lbl, pct, col in [
+        ("Ceramah",     cer_pct, C_PRI),
+        ("Diskusi",     dis_pct, C_GOLD),
+        ("Tanya Jawab", tny_pct, C_BLU),
+        ("Diam",        dim_pct, HexColor("#BDBDBD")),
+    ]:
+        y = _pbar(c, lbl, pct, col, y)
+    y -= 8
+
+    # Duration summary table — 4 columns
+    TH  = 46
+    CW4 = CW / 4
+    c.setFillColor(C_BG)
+    c.setStrokeColor(C_BDR)
+    c.setLineWidth(0.5)
+    c.rect(ML, y - TH, CW, TH, fill=1, stroke=1)
+
+    for i, (tl, tv, tc, tb) in enumerate([
+        ("TOTAL DURASI",       f"{tot_min} Menit",           C_TXT,  True),
+        ("CERAMAH",            f"{cer_min} Menit",           C_PRI,  cer_pct > 0),
+        ("DISKUSI",            f"{dis_min} Menit",           C_GOLD, dis_pct > 0),
+        ("TANYA JAWAB / DIAM", f"{tny_min + dim_min} Menit", C_TXT,  False),
+    ]):
+        cx = ML + i * CW4 + 8
+        if i > 0:
+            c.setStrokeColor(C_BDR)
+            c.line(ML + i * CW4, y - 3, ML + i * CW4, y - TH + 3)
+        c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+        c.drawString(cx, y - 13, tl)
+        c.setFillColor(tc)
+        c.setFont("Helvetica-Bold" if tb else "Helvetica", 12 if tb else 10)
+        c.drawString(cx, y - 34, tv)
+
+    y -= TH + 14
+
+    # ── Section D: Kesesuaian Metode ────────────────────────────────
+    y = _sec_hdr(c, "D", "KESESUAIAN METODE PEMBELAJARAN", y)
+    y -= 10
+
+    GH3 = 60
+    CW3 = CW / 3
+    G3T = y
+
+    for i, (lbl, val, vtype) in enumerate([
+        ("METODE RPS (RENCANA)",     peng_rps,       "text"),
+        ("AKTIVITAS AKTUAL DOMINAN", met_dom,         "bold"),
+        ("KESESUAIAN METODE",        kes_met.upper(), "badge"),
+    ]):
+        cx = ML + i * CW3
+        c.setFillColor(C_BG)
+        c.setStrokeColor(C_BDR)
+        c.setLineWidth(0.5)
+        c.rect(cx, G3T - GH3, CW3, GH3, fill=1, stroke=1)
+        c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+        c.drawString(cx + 8, G3T - 13, lbl)
+        if vtype in ("text", "bold"):
+            st = _ps(
+                fontSize=8.5, leading=12,
+                fontName="Helvetica-Bold" if vtype == "bold" else "Helvetica"
+            )
+            _para(c, val, st, cx + 8, G3T - 18, CW3 - 16)
+        else:
+            _badge_text(c, cx + 8, G3T - 40,
+                        C_GRN if is_met_ok else C_PRI, val)
+
+    y = G3T - GH3 - 10
+
+    # Kesimpulan box
+    y = _note_box(c, "Kesimpulan:", penj_met, y)
+
+    _footer(c, 2, 2)
+    c.save()
     return output_path
 
 

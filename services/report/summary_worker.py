@@ -233,6 +233,8 @@ async def process_summary(report):
                 local_path,
                 nama_matkul=nama_matkul,
                 pertemuan_ke=pertemuan_ke,
+                kode_kelas=str(report.get("kelas") or ""),
+                tanggal=str(report.get("tanggal") or ""),
             )
 
             # ── 10. Upload PDF ────────────────────────────────────────
