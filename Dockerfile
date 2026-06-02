@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy seluruh source
 COPY . .
 
-# Railway inject $PORT otomatis, default ke 8080 jika tidak ada
+# Railway inject $PORT — set default 8080 agar tidak kosong saat build
+ENV PORT=8080
 EXPOSE 8080
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
