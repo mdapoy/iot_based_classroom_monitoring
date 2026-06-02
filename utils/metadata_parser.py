@@ -2,20 +2,42 @@ import re
 from datetime import datetime
 
 def parse_filename(filename: str):
+    """
+    Parse nama file audio dari GDrive.
+
+    Format: tanggal_jam_ruangan_kode_matkul_kode_dosen_kelas[.ext]
+    Contoh: 2026-04-30_13-30_KU3.04.17_AZK1GAB3_MFC_TK-48-GAB1.mp4
+
+    jam di GDrive menggunakan dash (13-30), dinormalisasi ke colon+detik
+    agar konsisten dengan format kolom DB dan cache-check (13:30:00).
+    """
     try:
-        name = filename.replace(".wav", "").replace(".mp4", "")
+        name = (
+            filename
+            .replace(".wav", "")
+            .replace(".mp4", "")
+            .replace(".mkv", "")
+            .replace(".mov", "")
+            .replace(".MOV", "")
+        )
         parts = name.split("_")
 
         if len(parts) != 6:
             raise ValueError("Format filename tidak sesuai")
 
+        # Normalisasi jam: "13-30" → "13:30:00"
+        jam_raw = parts[1]                          # "13-30" atau "13:30"
+        jam_norm = jam_raw.replace("-", ":")        # "13:30"
+        if len(jam_norm) == 5:                      # pastikan ada detik
+            jam_norm += ":00"                       # "13:30:00"
+
         return {
-            "tanggal": parts[0],
-            "jam": parts[1],
-            "ruangan": parts[2],
+            "tanggal":    parts[0],
+            "jam":        jam_norm,
+            "ruangan":    parts[2],
             "kode_matkul": parts[3],
             "kode_dosen": parts[4],
-            "kelas": parts[5],
+            "kelas":      parts[5],
         }
 
     except Exception as e:

@@ -146,17 +146,25 @@ async def generate_report(data: dict):
         # =========================
         logger.info("[CACHE] No existing report found")
 
-        # NORMALIZE JAM
-        jam = data["jam"][:5]
+        # NORMALIZE JAM — format GDrive menggunakan colon (13:30), bukan dash
+        jam = data["jam"][:5]   # "13:30:00" → "13:30"
         logger.info(f"[NORMALIZE] Jam normalized | jam={jam}")
 
-        base_filename = f"{data['tanggal']}_{jam}_{data['ruangan']}_{data['kode_matkul']}_{data['kode_dosen']}_{data['kelas']}"
+        # Search key dipecah 2 karena format ruangan bisa berbeda antara DB dan GDrive
+        # (misal: DB simpan "KU3.04.17" tapi GDrive pakai "KU3-0417")
+        # Strategi: cari file yang mengandung tanggal+jam DAN matkul+dosen+kelas
+        search_prefix = f"{data['tanggal']}_{jam}"                                      # "2026-04-30_13:30"
+        search_suffix = f"_{data['kode_matkul']}_{data['kode_dosen']}_{data['kelas']}"  # "_AZK1GAB3_MFC_TK-48-GAB1"
+        base_filename = search_prefix + search_suffix   # untuk logging saja
+
         logger.info(f"[FILENAME] Generated base filename | base_filename={base_filename}")
 
         # DOWNLOAD AUDIO
         logger.info(f"[DOWNLOAD] Attempting to download audio | filename={base_filename}")
 
-        audio_path, real_filename, used_folder_id = get_file_from_gdrive_flexible(base_filename)
+        audio_path, real_filename, used_folder_id = get_file_from_gdrive_flexible(
+            search_prefix, search_suffix
+        )
 
         if not audio_path:
             logger.error(f"[DOWNLOAD FAILED] File not found | searched_folder={used_folder_id}")

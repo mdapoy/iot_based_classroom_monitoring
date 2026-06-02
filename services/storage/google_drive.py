@@ -154,15 +154,27 @@ def download_file(file_id: str, filename: str):
 # =========================
 # FLEXIBLE SEARCH + DOWNLOAD
 # =========================
-def get_file_from_gdrive_flexible(base_filename: str):
+def get_file_from_gdrive_flexible(primary_key: str, secondary_key: str = None):
+    """
+    Cari file di GDrive berdasarkan satu atau dua 'name contains' kondisi.
+
+    Dua-kondisi digunakan ketika format bagian nama file bisa berbeda antara
+    DB dan GDrive (contoh: ruangan "KU3.04.17" di DB vs "KU3-0417" di GDrive).
+
+    Args:
+        primary_key   : substring pertama (wajib), misal "2026-04-30_13:30"
+        secondary_key : substring kedua (opsional), misal "_AZK1GAB3_MFC_TK-48-GAB1"
+    """
     try:
         service = get_drive_service()
 
-        query = (
-            f"name contains '{base_filename}' "
-            f"and '{FOLDER_ID}' in parents "
-            f"and trashed = false"
-        )
+        # Bangun query — primary selalu ada, secondary opsional
+        conds = [f"name contains '{primary_key}'"]
+        if secondary_key:
+            conds.append(f"name contains '{secondary_key}'")
+        conds += [f"'{FOLDER_ID}' in parents", "trashed = false"]
+
+        query = " and ".join(conds)
 
         for attempt in range(1, MAX_RETRIES + 1):
 
@@ -170,7 +182,8 @@ def get_file_from_gdrive_flexible(base_filename: str):
                 logger.info(
                     f"[GDRIVE SEARCH] "
                     f"attempt={attempt} | "
-                    f"filename={base_filename}"
+                    f"primary={primary_key} | "
+                    f"secondary={secondary_key}"
                 )
 
                 results = service.files().list(
@@ -197,11 +210,10 @@ def get_file_from_gdrive_flexible(base_filename: str):
                         f"filenames={[f['name'] for f in files]}"
                     )
 
+                    # Coba exact match dengan primary+secondary combined
+                    combined = primary_key + (secondary_key or "")
                     exact_match = next(
-                        (
-                            f for f in files
-                            if f["name"] == base_filename
-                        ),
+                        (f for f in files if combined in f["name"]),
                         None
                     )
 
