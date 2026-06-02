@@ -25,6 +25,8 @@ def _build_webhook_url() -> str | None:
     """
     Susun URL webhook AssemblyAI dari CALLBACK_URL.
     Contoh: https://app.railway.app/callback/assemblyai
+
+    Otomatis tambah https:// jika CALLBACK_URL tidak punya protokol.
     """
     if not CALLBACK_URL:
         return None
@@ -32,6 +34,9 @@ def _build_webhook_url() -> str | None:
     # Hapus suffix /callback lama jika ada
     if base.endswith("/callback"):
         base = base[: -len("/callback")]
+    # Pastikan selalu pakai https://
+    if not base.startswith("http://") and not base.startswith("https://"):
+        base = f"https://{base}"
     return f"{base}/callback/assemblyai"
 
 
