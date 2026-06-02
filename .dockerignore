@@ -1,0 +1,41 @@
+# Environment — jangan ikut di image, set di Railway dashboard
+.env
+.env.*
+
+# Git
+.git
+.gitignore
+.github
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment lokal
+.venv/
+venv/
+env/
+
+# Temp files dari runtime (dibuat ulang saat jalan)
+temp/
+chunks/
+uploads/
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
+
+# Log files
+*.log
+
+# Credentials lokal (Railway pakai env vars)
+credentials/

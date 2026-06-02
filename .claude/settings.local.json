@@ -34,7 +34,8 @@
       "mcp__9ce48688-9413-47b8-bdf8-e1501011a10e__list_tables",
       "mcp__9ce48688-9413-47b8-bdf8-e1501011a10e__execute_sql",
       "WebFetch(domain:railway.com)",
-      "WebFetch(domain:docs.railway.com)"
+      "WebFetch(domain:docs.railway.com)",
+      "Bash(dir \"C:\\\\TUGAS AKHIR\")"
     ]
   }
 }

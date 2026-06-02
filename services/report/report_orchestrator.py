@@ -21,13 +21,15 @@ async def generate_report(data: dict):
         # =========================
         logger.info("[CACHE] Checking existing report...")
 
+        # Tidak gunakan ruangan di cache-check karena formatnya bisa beda
+        # antara request (KU3.04.17) dan nama file GDrive (KU3-0417).
+        # Kombinasi tanggal + jam + matkul + dosen + kelas sudah unik.
         existing = supabase.table(TABLE).select("*").match({
-            "tanggal": data["tanggal"],
-            "jam": data["jam"],
-            "ruangan": data["ruangan"],
+            "tanggal":    data["tanggal"],
+            "jam":        data["jam"],
             "kode_matkul": data["kode_matkul"],
             "kode_dosen": data["kode_dosen"],
-            "kelas": data["kelas"]
+            "kelas":      data["kelas"],
         }).execute()
 
         record = existing.data[0] if existing.data else None
