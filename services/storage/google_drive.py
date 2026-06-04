@@ -171,7 +171,11 @@ def get_file_from_gdrive_flexible(primary_key: str, secondary_key: str = None):
         conds = [f"name contains '{primary_key}'"]
         if secondary_key:
             conds.append(f"name contains '{secondary_key}'")
-        conds += [f"'{FOLDER_ID}' in parents", "trashed = false"]
+        conds += [
+            f"'{FOLDER_ID}' in parents",
+            "(mimeType = 'audio/mpeg' or mimeType = 'audio/wav')",
+            "trashed = false",
+        ]
 
         query = " and ".join(conds)
 
@@ -209,14 +213,13 @@ def get_file_from_gdrive_flexible(primary_key: str, secondary_key: str = None):
                         f"filenames={[f['name'] for f in files]}"
                     )
 
-                    # Coba exact match dengan primary+secondary combined
-                    combined = primary_key + (secondary_key or "")
-                    exact_match = next(
-                        (f for f in files if combined in f["name"]),
-                        None
-                    )
-
-                    file = exact_match if exact_match else files[0]
+                    # Prioritas: .wav > .mp3 > file pertama
+                    audio_exts = (".wav", ".mp3", ".m4a", ".ogg", ".flac")
+                    audio_files = [
+                        f for f in files
+                        if f["name"].lower().endswith(audio_exts)
+                    ]
+                    file = audio_files[0] if audio_files else files[0]
 
                 else:
                     file = files[0]
