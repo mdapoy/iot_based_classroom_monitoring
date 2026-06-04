@@ -25,3 +25,8 @@ async def start_summary_worker():
 
     print("[SYSTEM] Starting Summary Worker...")
     summary_worker_task = asyncio.create_task(run_summary_worker())
+
+
+async def start_download_worker(report_id: int, search_prefix: str, search_suffix: str):
+    from services.worker.download_worker import run_download_worker
+    asyncio.create_task(run_download_worker(report_id, search_prefix, search_suffix))
