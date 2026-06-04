@@ -177,11 +177,15 @@ async def process_summary(report):
             if not summary_result.get("success"):
                 raise Exception(summary_result.get("error", "Summarize gagal"))
 
-            summary_text_val = summary_result["result"]
-            if isinstance(summary_text_val, dict):
-                summary_text_val = (
-                    summary_text_val.get("abstrak")
-                    or summary_text_val.get("summary")
+            ringkasan_val = summary_result.get("ringkasan", {"pembuka": "", "poin": []})
+            detail_val    = summary_result.get("detail",    "")
+
+            # Fallback: kalau detail kosong coba ambil dari key lama
+            if not detail_val:
+                detail_val = (
+                    summary_result.get("result")
+                    or summary_result.get("abstrak")
+                    or summary_result.get("summary")
                     or ""
                 )
 
@@ -228,7 +232,7 @@ async def process_summary(report):
             local_path = f"temp/report_{report_id}.pdf"
 
             generate_combined_pdf(
-                summary_text_val,
+                detail_val,
                 analysis,
                 local_path,
                 nama_matkul=nama_matkul,
@@ -237,6 +241,7 @@ async def process_summary(report):
                 tanggal=str(report.get("tanggal")         or ""),
                 kode_dosen=str(report.get("kode_dosen")   or ""),
                 kode_matkul=str(report.get("kode_matkul") or ""),
+                ringkasan=ringkasan_val,
             )
 
             # ── 10. Upload PDF ────────────────────────────────────────

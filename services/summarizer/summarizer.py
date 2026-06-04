@@ -1,5 +1,7 @@
 from google import genai
 import os
+import re
+import json
 import time
 from dotenv import load_dotenv
 from core.logger import logger
@@ -63,18 +65,36 @@ def summarize_text(transcript: str, nama_matkul: str = "mata kuliah", max_retrie
 
     logger.info(f"[SUMMARY] transcript_length={len(transcript)} nama_matkul={nama_matkul}")
 
-    prompt = f"""Anda adalah seorang peringkas profesional yang bertugas merangkum hasil rekaman kuliah pada kelas {nama_matkul}.
+    prompt = f"""Anda adalah peringkas profesional rekaman kuliah {nama_matkul}.
 
-ATURAN WAJIB FORMAT:
-- Tulis dalam bentuk PARAGRAF mengalir, bukan daftar atau poin-poin.
-- DILARANG menggunakan penomoran (1. 2. 3. atau a. b. c.).
-- DILARANG menggunakan simbol markdown seperti **, *, #, -, atau karakter khusus lain (■, $, dll).
-- Jika perlu menyebut urutan, gunakan kata transisi: "pertama", "kedua", "selanjutnya", "kemudian", "terakhir".
-- Semua teks harus berupa kalimat biasa tanpa pemformatan apapun.
+Hasilkan DUA bagian:
 
-ATURAN KONTEN:
-- Cakup poin-poin penting dari transkrip.
-- Gunakan bahasa yang jelas dan mudah dipahami.
+1. RINGKASAN: Terdiri dari kalimat pembuka (1 kalimat) yang menggambarkan topik umum perkuliahan, diikuti poin-poin dengan urutan berikut:
+   - Poin 1  : Topik atau konsep utama yang diperkenalkan
+   - Poin 2  : Sub-topik atau pembagian materi
+   - Poin 3  : Rumus atau metode kunci yang dibahas
+   - Poin 4  : Contoh soal atau kasus yang dikerjakan (jika ada)
+   - Poin 5  : Kesimpulan atau poin penting dari dosen
+   - Poin 6-8: Topik lanjutan atau pembahasan tambahan (jika ada)
+   Sertakan hanya poin yang memang ada dalam transkrip. Maksimal 8 poin.
+
+2. DETAIL: Satu paragraf panjang yang menjelaskan seluruh materi secara rinci dan mengalir, mencakup konsep, rumus, contoh, dan penjelasan lengkap.
+
+Kembalikan HANYA dalam format JSON berikut (tanpa teks lain di luar JSON):
+{{
+  "ringkasan": {{
+    "pembuka": "Kalimat pembuka yang menggambarkan topik umum perkuliahan.",
+    "poin": ["poin 1", "poin 2", "poin 3"]
+  }},
+  "detail": "paragraf detail lengkap..."
+}}
+
+ATURAN WAJIB:
+- PEMBUKA: 1 kalimat singkat yang merangkum topik umum perkuliahan.
+- POIN: array of string, masing-masing 1 kalimat singkat dan padat, maksimal 8 elemen.
+- DETAIL: paragraf mengalir tanpa poin-poin, tanpa penomoran, tanpa simbol markdown (**, *, #, -).
+- Jika perlu menyebut urutan di detail, gunakan: "pertama", "selanjutnya", "kemudian", "terakhir".
+- Bahasa Indonesia yang jelas dan mudah dipahami.
 - Fokus pada konteks pembelajaran {nama_matkul}.
 
 Berikut transkrip:
@@ -97,20 +117,52 @@ Berikut transkrip:
                 )
 
                 elapsed = round(time.time() - start, 2)
+                text    = response.text.strip()
 
-                text = response.text.strip()
+                # ── Parse JSON response ───────────────────────────────
+                # ringkasan = {"pembuka": str, "poin": list[str]}
+                ringkasan = {"pembuka": "", "poin": []}
+                detail    = ""
+                try:
+                    json_match = re.search(r'\{.*\}', text, re.DOTALL)
+                    if json_match:
+                        parsed   = json.loads(json_match.group())
+                        raw_ring = parsed.get("ringkasan", {})
+
+                        if isinstance(raw_ring, dict):
+                            pembuka = str(raw_ring.get("pembuka", "")).strip()
+                            poin    = raw_ring.get("poin", [])
+                            poin    = [str(p).strip() for p in poin[:8] if str(p).strip()]
+                            ringkasan = {"pembuka": pembuka, "poin": poin}
+
+                        elif isinstance(raw_ring, list):
+                            # Fallback: model kembalikan array langsung
+                            poin      = [str(p).strip() for p in raw_ring[:8] if str(p).strip()]
+                            ringkasan = {"pembuka": "", "poin": poin}
+
+                        elif isinstance(raw_ring, str) and raw_ring.strip():
+                            ringkasan = {"pembuka": raw_ring.strip(), "poin": []}
+
+                        detail = parsed.get("detail", "").strip()
+
+                    if not detail:
+                        detail = text
+                except Exception:
+                    detail = text
 
                 logger.info(
                     f"[SUMMARY SUCCESS] "
                     f"model={model_name} "
                     f"elapsed={elapsed}s "
-                    f"text_length={len(text)}"
+                    f"ringkasan_poin={len(ringkasan.get('poin', []))} "
+                    f"detail_len={len(detail)}"
                 )
 
                 return {
-                    "success": True,
-                    "result": text,
-                    "model": model_name
+                    "success":   True,
+                    "ringkasan": ringkasan,   # list[str], maks 8 poin
+                    "detail":    detail,      # str paragraf
+                    "model":     model_name,
                 }
 
             except Exception as e:
@@ -159,6 +211,8 @@ Berikut transkrip:
     logger.error("[SUMMARY FAILED] all models failed")
 
     return {
-        "success": False,
-        "error": "Semua model Gemini gagal"
+        "success":  False,
+        "ringkasan": "",
+        "detail":    "",
+        "error":     "Semua model Gemini gagal"
     }

@@ -122,6 +122,7 @@ def generate_combined_pdf(
     tanggal: str = "",
     kode_dosen: str = "",
     kode_matkul: str = "",
+    ringkasan: str = "",
 ) -> str:
     """
     Generate PDF laporan 2 halaman — template profesional Clactify:
@@ -325,7 +326,7 @@ def generate_combined_pdf(
     if os.path.exists(_LOGO_PATH):
         c.drawImage(
             _LOGO_PATH,
-            MR - hdr_txt_w - LOGO_W - 4, y - LOGO_H + 3,
+            MR - hdr_txt_w - LOGO_W - 4, y - 4,
             width=LOGO_W, height=LOGO_H,
             preserveAspectRatio=True, mask="auto"
         )
@@ -337,19 +338,19 @@ def generate_combined_pdf(
     # Title
     c.setFillColor(C_TXT)
     c.setFont("Helvetica-Bold", 24)
-    c.drawString(ML, y, "LAPORAN EVALUASI PEMBELAJARAN")
+    c.drawString(ML, y, "LAPORAN IDENTIFIKASI PEMBELAJARAN")
     y -= 16
 
-    # Subtitle — tambah kode_dosen dan kode_matkul
-    kls    = f"  |  {kode_kelas}"  if kode_kelas  else ""
-    kd_str = f"  |  {kode_dosen}"  if kode_dosen  else ""
-    km_str = f"  |  {kode_matkul}" if kode_matkul else ""
+    # Subtitle — format: FISIKA 2 (AZK1GAB3) | Pertemuan ke-9 | TK-48-GAB1 | MFC
+    nm_str  = f"{nama_matkul} ({kode_matkul})" if kode_matkul else nama_matkul
+    kls_str = f"  |  {kode_kelas}" if kode_kelas else ""
+    kd_str  = f"  |  {kode_dosen}" if kode_dosen else ""
     c.setFillColor(HexColor("#666666"))
     c.setFont("Helvetica", 8.5)
     c.drawString(
         ML, y,
-        f"Analisis Kesesuaian & Aktivitas Kelas  |  {nama_matkul}"
-        f"  |  Pertemuan ke-{pertemuan_ke}{kls}{kd_str}{km_str}"
+        f"Analisis Kesesuaian & Aktivitas Kelas  |  {nm_str}"
+        f"  |  Pertemuan ke-{pertemuan_ke}{kls_str}{kd_str}"
     )
     y -= 10
 
@@ -367,21 +368,91 @@ def generate_combined_pdf(
     )
     y -= 14
 
-    # ── Section A: Ringkasan ─────────────────────────────────────────
-    y = _sec_hdr(c, "A", "RINGKASAN MATERI PERKULIAHAN", y)
-    y -= 10
+    # ── Section A: Materi Perkuliahan ────────────────────────────────
+    y = _sec_hdr(c, "A", "MATERI PERKULIAHAN", y)
+    y -= 14
+
+    # Sub-header: Ringkasan
+    c.setFillColor(C_PRI)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(ML, y, "Ringkasan Materi Perkuliahan")
+    y -= 12
+
+    # Render ringkasan: pembuka + bullet points
+    if isinstance(ringkasan, dict):
+        pembuka      = ringkasan.get("pembuka", "")
+        bullet_items = ringkasan.get("poin", [])
+    elif isinstance(ringkasan, list):
+        pembuka      = ""
+        bullet_items = ringkasan
+    else:
+        pembuka      = ""
+        bullet_items = []
+
+    if pembuka or bullet_items:
+        ST_PEMBUKA = _ps(fontSize=9, leading=13)
+        ST_BULLET  = _ps(fontSize=9, leading=14)
+
+        if pembuka:
+            y = _para(c, pembuka, ST_PEMBUKA, ML, y, CW)
+            y -= 8
+
+        for item in bullet_items[:8]:
+            txt = f"•  {item.strip()}"
+            y   = _para(c, txt, ST_BULLET, ML + 4, y, CW - 4)
+            y  -= 3
+    else:
+        y = _para(c, "............................................", ST_BODY, ML, y, CW)
+    y -= 18
+
+    # Sub-header: Detail
+    c.setFillColor(C_PRI)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(ML, y, "Detail Materi Perkuliahan")
+    y -= 12
+
     y = _para(c, _md_to_rl(summary or "-"), ST_BODY, ML, y, CW)
-    y -= 16
+
+    _footer(c, 1, 2)
+    c.showPage()
+
+    # ════════════════════════ PAGE 2 ═════════════════════════════════
+    y = PAGE_H - 10
+
+    # Running header — top accent line
+    c.setFillColor(C_PRI)
+    c.rect(ML, y - 4, CW, 4, fill=1, stroke=0)
+    y -= 4
+
+    # Running header — text
+    c.setFillColor(C_TXT)
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(
+        ML, y - 14,
+        f"LAPORAN IDENTIFIKASI PEMBELAJARAN  |  {nama_matkul.upper()}  --  PERTEMUAN KE-{pertemuan_ke}"
+    )
+    p2_txt   = "CLACTIFY"
+    p2_txt_w = c.stringWidth(p2_txt, "Helvetica-Bold", 7.5)
+    if os.path.exists(_LOGO_PATH):
+        c.drawImage(
+            _LOGO_PATH,
+            MR - p2_txt_w - LOGO_W - 4, y - 18,
+            width=LOGO_W, height=LOGO_H,
+            preserveAspectRatio=True, mask="auto"
+        )
+    c.setFillColor(C_PRI)
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawRightString(MR, y - 14, p2_txt)
+    y -= 26
 
     # ── Section B: Kesesuaian RPS ────────────────────────────────────
     y = _sec_hdr(c, "B", "ANALISIS KESESUAIAN RPS", y)
     y -= 10
 
-    GH  = 55          # grid cell height
-    HW  = CW / 2      # half width
-    GT  = y           # grid top anchor
+    GH  = 55
+    HW  = CW / 2
+    GT  = y
 
-    # Draw all 4 cell borders first
     for col in range(2):
         for row in range(2):
             cx = ML + col * HW
@@ -419,38 +490,7 @@ def generate_combined_pdf(
 
     # Catatan Evaluator box
     y = _note_box(c, "Catatan Evaluator:", penjelasan, y)
-
-    _footer(c, 1, 2)
-    c.showPage()
-
-    # ════════════════════════ PAGE 2 ═════════════════════════════════
-    y = PAGE_H - 10
-
-    # Running header — top accent line
-    c.setFillColor(C_PRI)
-    c.rect(ML, y - 4, CW, 4, fill=1, stroke=0)
-    y -= 4
-
-    # Running header — text
-    c.setFillColor(C_TXT)
-    c.setFont("Helvetica-Bold", 7.5)
-    c.drawString(
-        ML, y - 14,
-        f"LAPORAN EVALUASI PEMBELAJARAN  |  {nama_matkul.upper()}  --  PERTEMUAN KE-{pertemuan_ke}"
-    )
-    p2_txt   = "CLACTIFY"
-    p2_txt_w = c.stringWidth(p2_txt, "Helvetica-Bold", 7.5)
-    if os.path.exists(_LOGO_PATH):
-        c.drawImage(
-            _LOGO_PATH,
-            MR - p2_txt_w - LOGO_W - 4, y - 14 - LOGO_H + 3,
-            width=LOGO_W, height=LOGO_H,
-            preserveAspectRatio=True, mask="auto"
-        )
-    c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 7.5)
-    c.drawRightString(MR, y - 14, p2_txt)
-    y -= 26
+    y -= 14
 
     # ── Section C: Aktivitas ─────────────────────────────────────────
     y = _sec_hdr(c, "C", "AKTIVITAS PEMBELAJARAN", y)
