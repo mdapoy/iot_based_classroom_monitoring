@@ -5,3 +5,4 @@ token.json
 credentials.json
 model.py
 coba.py
+.claude/settings.local.json
