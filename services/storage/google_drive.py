@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import tempfile
 
 from dotenv import load_dotenv
 from google.oauth2 import service_account
@@ -115,15 +116,14 @@ def download_file(file_id: str, filename: str):
     try:
         service = get_drive_service()
 
-        # download ke folder Downloads user
-        downloads_folder = os.path.join(
-            os.path.expanduser("~"),
-            "Downloads"
-        )
+        # Gunakan /tmp (tempfile) agar kompatibel di Railway maupun lokal
+        downloads_folder = tempfile.gettempdir()
 
         os.makedirs(downloads_folder, exist_ok=True)
 
-        file_path = os.path.join(downloads_folder, filename)
+        # Ganti ':' yang tidak valid di Windows/beberapa OS dengan '-'
+        safe_filename = filename.replace(":", "-")
+        file_path = os.path.join(downloads_folder, safe_filename)
 
         request = service.files().get_media(fileId=file_id)
 
@@ -137,8 +137,7 @@ def download_file(file_id: str, filename: str):
 
                 if status:
                     progress = int(status.progress() * 100)
-
-                    logger.info(f"[DOWNLOAD] {progress}%")
+                    logger.info(f"[DOWNLOAD] {filename} | {progress}%")
 
         logger.info(
             f"[DOWNLOAD SUCCESS] file_name={filename} | saved_to={file_path}"

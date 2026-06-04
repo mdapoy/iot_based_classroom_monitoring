@@ -35,7 +35,15 @@
       "mcp__9ce48688-9413-47b8-bdf8-e1501011a10e__execute_sql",
       "WebFetch(domain:railway.com)",
       "WebFetch(domain:docs.railway.com)",
-      "Bash(dir \"C:\\\\TUGAS AKHIR\")"
+      "Bash(dir \"C:\\\\TUGAS AKHIR\")",
+      "Bash(move \"C:\\\\TUGAS AKHIR\\\\klaktify-icon.png\" \"C:\\\\TUGAS AKHIR\\\\assets\\\\klaktify-icon.png\")",
+      "Bash(del \"C:\\\\TUGAS AKHIR\\\\services\\\\stt\\\\worker.py\")",
+      "Bash(del \"C:\\\\TUGAS AKHIR\\\\services\\\\report\\\\summary_worker.py\")",
+      "Bash(\"C:\\\\Users\\\\Dapoy\\\\miniconda3\\\\envs\\\\api_cam\\\\python.exe\" -c \"import os; from dotenv import load_dotenv; import json; load_dotenv\\(\\); v2=os.getenv\\('GOOGLE_CREDENTIALS_JSON_V2'\\); print\\('GOOGLE_CREDENTIALS_JSON_V2:', 'ADA' if v2 else 'TIDAK ADA'\\); creds=json.loads\\(v2\\) if v2 else {}; print\\('client_email:', creds.get\\('client_email','tidak ditemukan'\\)\\)\")",
+      "Bash(\"C:\\\\Users\\\\Dapoy\\\\miniconda3\\\\envs\\\\api_cam\\\\python.exe\" -c \"import os; from dotenv import load_dotenv; import json; load_dotenv\\(\\); v2=os.getenv\\('GOOGLE_CREDENTIALS_JSON_V2'\\); print\\('GOOGLE_CREDENTIALS_JSON_V2:', 'ADA' if v2 else 'TIDAK ADA'\\); creds=json.loads\\(v2\\) if v2 else {}; print\\('client_email:', creds.get\\('client_email','tidak ditemukan'\\)\\); print\\('project_id:', creds.get\\('project_id','tidak ditemukan'\\)\\)\")",
+      "Bash('C:\\\\Users\\\\Dapoy\\\\miniconda3\\\\envs\\\\api_cam\\\\python.exe' -c ' *)",
+      "Bash(git fetch *)",
+      "Bash(git restore *)"
     ]
   }
 }

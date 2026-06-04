@@ -1,8 +1,6 @@
 from repositories.supabase_client import supabase
-from services.storage.google_drive import get_file_from_gdrive_flexible
 from services.report.report_service import get_existing_summary
-from services.worker.worker_manager import start_stt_worker, start_summary_worker
-from utils.metadata_parser import parse_filename
+from services.worker.worker_manager import start_summary_worker, start_download_worker
 from core.logger import logger
 
 TABLE = "reports"
@@ -161,66 +159,28 @@ async def generate_report(data: dict):
 
         logger.info(f"[FILENAME] Generated base filename | base_filename={base_filename}")
 
-        # DOWNLOAD AUDIO
-        logger.info(f"[DOWNLOAD] Attempting to download audio | filename={base_filename}")
-
-        audio_path, real_filename, used_folder_id = get_file_from_gdrive_flexible(
-            search_prefix, search_suffix
-        )
-
-        if not audio_path:
-            logger.error(f"[DOWNLOAD FAILED] File not found | searched_folder={used_folder_id}")
-            raise Exception("File tidak ditemukan di GDrive")
-
-        logger.info(f"[DOWNLOAD SUCCESS] audio_path={audio_path} | real_filename={real_filename}")
-
-        # PARSE METADATA
-        meta = parse_filename(real_filename)
-        logger.info(f"[PARSE] Metadata extracted | meta={meta}")
-
-        # INSERT REPORT
+        # INSERT REPORT dengan data dari request
+        # Metadata lengkap (ruangan, dll) akan di-update oleh download worker
+        # setelah mendapat nama file asli dari GDrive
         logger.info("[DB] Inserting new report...")
         insert_res = supabase.table(TABLE).insert({
-            **meta,
-            "status": "pending"
+            "tanggal":     data["tanggal"],
+            "jam":         data["jam"],
+            "kode_matkul": data["kode_matkul"],
+            "kode_dosen":  data["kode_dosen"],
+            "kelas":       data["kelas"],
+            "ruangan":     data.get("ruangan", ""),
+            "status":      "pending",
         }).execute()
 
         report_id = insert_res.data[0]["id"]
         logger.info(f"[DB SUCCESS] Report inserted | report_id={report_id}")
 
-        # CHUNK AUDIO
-        logger.info("[CHUNKING] Splitting audio...")
-        from services.chunker import split_audio
+        # KICK OFF background download worker — return langsung ke client
+        logger.info(f"[WORKER] Starting download worker | report_id={report_id}")
+        await start_download_worker(report_id, search_prefix, search_suffix)
 
-        chunks = split_audio(audio_path, report_id=report_id)
-
-        if not chunks:
-            logger.error("[CHUNKING FAILED] No chunks generated")
-            raise Exception("Gagal melakukan chunking audio")
-
-        logger.info(f"[CHUNKING SUCCESS] Total chunks={len(chunks)}")
-
-        # INSERT CHUNKS
-        logger.info("[DB] Inserting audio chunks...")
-        for i, chunk_path in enumerate(chunks):
-            supabase.table("audio_chunks").insert({
-                "report_id": report_id,
-                "chunk_index": i,
-                "chunk_path": chunk_path,
-                "status": "pending"
-            }).execute()
-
-        logger.info("[DB SUCCESS] All chunks inserted")
-
-        # UPDATE STATUS
-        supabase.table("reports").update({
-            "status": "chunking"
-        }).eq("id", report_id).execute()
-
-        logger.info(f"[DONE] Report processing started | report_id={report_id}")
-
-        await start_stt_worker()
-        await start_summary_worker()
+        logger.info(f"[DONE] Download worker started | report_id={report_id}")
 
         return {
             "status": "processing",

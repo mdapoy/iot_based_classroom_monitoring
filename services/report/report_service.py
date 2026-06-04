@@ -10,6 +10,12 @@ from reportlab.pdfgen import canvas as rl_canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.colors import HexColor, white
 from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.utils import ImageReader
+
+_LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "assets", "klaktify-icon.png"
+)
 
 TABLE = "reports"
 
@@ -114,6 +120,8 @@ def generate_combined_pdf(
     pertemuan_ke: int = 0,
     kode_kelas: str = "",
     tanggal: str = "",
+    kode_dosen: str = "",
+    kode_matkul: str = "",
 ) -> str:
     """
     Generate PDF laporan 2 halaman — template profesional Clactify:
@@ -307,12 +315,23 @@ def generate_combined_pdf(
     y = PAGE_H - 35
 
     # Header row
+    LOGO_H = 13
+    LOGO_W = 13
     c.setFillColor(C_PRI)
     c.setFont("Helvetica-Bold", 9)
     c.drawString(ML, y, "UNIVERSITAS TELKOM")
+    hdr_txt   = "CLACTIFY -- CLASS ACTIVITY IDENTIFY"
+    hdr_txt_w = c.stringWidth(hdr_txt, "Helvetica", 8)
+    if os.path.exists(_LOGO_PATH):
+        c.drawImage(
+            _LOGO_PATH,
+            MR - hdr_txt_w - LOGO_W - 4, y - LOGO_H + 3,
+            width=LOGO_W, height=LOGO_H,
+            preserveAspectRatio=True, mask="auto"
+        )
     c.setFillColor(C_LBL)
     c.setFont("Helvetica", 8)
-    c.drawRightString(MR, y, "CLACTIFY -- CLASS ACTIVITY IDENTIFY")
+    c.drawRightString(MR, y, hdr_txt)
     y -= 22
 
     # Title
@@ -321,14 +340,16 @@ def generate_combined_pdf(
     c.drawString(ML, y, "LAPORAN EVALUASI PEMBELAJARAN")
     y -= 16
 
-    # Subtitle
-    kls = f"  |  {kode_kelas}" if kode_kelas else ""
+    # Subtitle — tambah kode_dosen dan kode_matkul
+    kls    = f"  |  {kode_kelas}"  if kode_kelas  else ""
+    kd_str = f"  |  {kode_dosen}"  if kode_dosen  else ""
+    km_str = f"  |  {kode_matkul}" if kode_matkul else ""
     c.setFillColor(HexColor("#666666"))
     c.setFont("Helvetica", 8.5)
     c.drawString(
         ML, y,
         f"Analisis Kesesuaian & Aktivitas Kelas  |  {nama_matkul}"
-        f"  |  Pertemuan ke-{pertemuan_ke}{kls}"
+        f"  |  Pertemuan ke-{pertemuan_ke}{kls}{kd_str}{km_str}"
     )
     y -= 10
 
@@ -417,9 +438,18 @@ def generate_combined_pdf(
         ML, y - 14,
         f"LAPORAN EVALUASI PEMBELAJARAN  |  {nama_matkul.upper()}  --  PERTEMUAN KE-{pertemuan_ke}"
     )
+    p2_txt   = "CLACTIFY"
+    p2_txt_w = c.stringWidth(p2_txt, "Helvetica-Bold", 7.5)
+    if os.path.exists(_LOGO_PATH):
+        c.drawImage(
+            _LOGO_PATH,
+            MR - p2_txt_w - LOGO_W - 4, y - 14 - LOGO_H + 3,
+            width=LOGO_W, height=LOGO_H,
+            preserveAspectRatio=True, mask="auto"
+        )
     c.setFillColor(C_PRI)
     c.setFont("Helvetica-Bold", 7.5)
-    c.drawRightString(MR, y - 14, "CLACTIFY")
+    c.drawRightString(MR, y - 14, p2_txt)
     y -= 26
 
     # ── Section C: Aktivitas ─────────────────────────────────────────

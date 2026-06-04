@@ -14,11 +14,15 @@ def parse_filename(filename: str):
     try:
         name = (
             filename
+            .replace(".mp3", "")
             .replace(".wav", "")
             .replace(".mp4", "")
             .replace(".mkv", "")
             .replace(".mov", "")
             .replace(".MOV", "")
+            .replace(".m4a", "")
+            .replace(".ogg", "")
+            .replace(".flac", "")
         )
         parts = name.split("_")
 
