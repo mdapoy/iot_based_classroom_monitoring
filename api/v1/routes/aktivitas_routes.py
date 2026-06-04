@@ -91,7 +91,7 @@ def _fetch_stats(
 def get_summary(
     dosen: Optional[str] = None,
     kelas: Optional[str] = None,
-    range_days: int = Query(30, description="rentang hari ke belakang"),
+    range_days: int = Query(180, description="rentang hari ke belakang"),
 ):
     end = date.today()
     start = end - timedelta(days=range_days)
@@ -155,7 +155,7 @@ def get_summary(
 def get_per_matkul(
     dosen: Optional[str] = None,
     kelas: Optional[str] = None,
-    range_days: int = 30,
+    range_days: int = 180,
 ):
     end = date.today()
     start = end - timedelta(days=range_days)
@@ -218,7 +218,7 @@ def get_per_matkul(
 def get_dashboard(
     dosen: Optional[str] = None,
     kelas: Optional[str] = None,
-    range_days: int = 30,
+    range_days: int = 180,
 ):
     return {
         "summary":    get_summary(dosen, kelas, range_days),
