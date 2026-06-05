@@ -125,12 +125,18 @@ def analyze_rps(
    - SEBAGIAN SESUAI : ada irisan topik, tapi tidak lengkap atau ada topik di luar RPS
    - TIDAK SESUAI    : topik transkrip tidak berkaitan dengan RPS pertemuan ke-{pertemuan_ke}
 4. Tulis penjelasan singkat 2-3 kalimat yang menjelaskan temuan poin 1-3.
+5. Periksa apakah transkrip JUGA membahas materi dari pertemuan LAIN selain target ke-{pertemuan_ke}:
+   - Jika ada materi dari pertemuan sebelumnya → sebutkan "pertemuan ke-X (sebelumnya): [topik]"
+   - Jika ada materi dari pertemuan mendatang  → sebutkan "pertemuan ke-X (mendatang): [topik]"
+   - Jika ada materi yang tidak ada di RPS manapun → sebutkan "di luar RPS: [topik]"
+   - Jika tidak ada materi tambahan di luar target → tuliskan "TIDAK ADA"
 {metode_task}
 Jawab HANYA dalam format berikut (tanpa teks lain, tanpa markdown):
 KESESUAIAN: [SESUAI/SEBAGIAN SESUAI/TIDAK SESUAI]
 PERTEMUAN_TERDETEKSI: [nomor pertemuan yang paling cocok dengan isi transkrip]
 STATUS: [LEBIH CEPAT/TEPAT WAKTU/LEBIH LAMBAT]
 PENJELASAN: [2-3 kalimat penjelasan materi]
+CATATAN: [TIDAK ADA / deskripsi singkat materi tambahan di luar target pertemuan]
 {metode_format}
 """
 
@@ -183,6 +189,7 @@ def _parse_response(text: str) -> dict:
         "pertemuan_terdeteksi": "-",
         "status_waktu":         "-",
         "penjelasan":           "-",
+        "catatan":              "-",
         "metode_dominan":       "-",
         "kesesuaian_metode":    "-",
         "penjelasan_metode":    "-",
@@ -198,6 +205,8 @@ def _parse_response(text: str) -> dict:
             result["status_waktu"] = line.split(":", 1)[1].strip()
         elif line.startswith("PENJELASAN:") and not line.startswith("PENJELASAN_METODE:"):
             result["penjelasan"] = line.split(":", 1)[1].strip()
+        elif line.startswith("CATATAN:"):
+            result["catatan"] = line.split(":", 1)[1].strip()
         elif line.startswith("METODE_DOMINAN:"):
             result["metode_dominan"] = line.split(":", 1)[1].strip()
         elif line.startswith("KESESUAIAN_METODE:"):

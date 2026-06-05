@@ -123,6 +123,7 @@ def generate_combined_pdf(
     kode_dosen: str = "",
     kode_matkul: str = "",
     ringkasan: str = "",
+    catatan: str = "-",
 ) -> str:
     """
     Generate PDF laporan 2 halaman — template profesional Clactify:
@@ -490,6 +491,11 @@ def generate_combined_pdf(
 
     # Catatan Evaluator box
     y = _note_box(c, "Catatan Evaluator:", penjelasan, y)
+    y -= 8
+
+    # Catatan Materi Tambahan box
+    catatan_val = catatan if catatan and catatan.strip() else "-"
+    y = _note_box(c, "Catatan Materi Tambahan:", catatan_val, y)
     y -= 14
 
     # ── Section C: Aktivitas ─────────────────────────────────────────

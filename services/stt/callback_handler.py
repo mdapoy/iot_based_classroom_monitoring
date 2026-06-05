@@ -43,7 +43,7 @@ def _merge_short_utterances(utterances: list, min_duration_sec: float) -> list:
     return merged
 
 
-def handle_assemblyai_callback(transcript_id: str):
+def handle_assemblyai_callback(transcript_id: str) -> bool:
     """
     Dipanggil saat webhook dari AssemblyAI tiba.
 
@@ -67,7 +67,7 @@ def handle_assemblyai_callback(transcript_id: str):
 
         if not chunk_res.data:
             logger.warning(f"[AAI CALLBACK] Chunk not found | tid={transcript_id}")
-            return
+            return False
 
         chunk     = chunk_res.data[0]
         chunk_id  = chunk["id"]
@@ -77,7 +77,7 @@ def handle_assemblyai_callback(transcript_id: str):
         # Idempotent — skip jika sudah done
         if chunk["status"] == "done":
             logger.info(f"[AAI CALLBACK] Chunk {chunk_id} already done, skip")
-            return
+            return False
 
         # ── 2. Offset dari chunk_index ───────────────────────────────
         offset_sec = chunk_idx * CHUNK_DURATION_SEC
@@ -103,7 +103,7 @@ def handle_assemblyai_callback(transcript_id: str):
             logger.error(
                 f"[AAI CALLBACK] chunk={chunk_id} FAILED: {chunk_data.get('error')}"
             )
-            return
+            return False
 
         # ── 5. Merge short utterances per chunk ──────────────────────
         utterances        = chunk_data["utterances"]
@@ -149,7 +149,7 @@ def handle_assemblyai_callback(transcript_id: str):
                 f"[AAI CALLBACK] {len(remaining.data)} chunk(s) still pending "
                 f"for report {report_id}"
             )
-            return
+            return False
 
         # ── 8. Lock report → trigger merge ──────────────────────────
         lock = (
@@ -164,7 +164,7 @@ def handle_assemblyai_callback(transcript_id: str):
             logger.info(
                 f"[AAI CALLBACK] report {report_id} already locked, skip merge"
             )
-            return
+            return False
 
         logger.info(
             f"[AAI CALLBACK] All chunks done → merge report {report_id}"
@@ -177,10 +177,13 @@ def handle_assemblyai_callback(transcript_id: str):
             supabase.table("reports").update({
                 "status": "failed"
             }).eq("id", report_id).execute()
-        else:
-            logger.info(f"[AAI CALLBACK] Merge done for report {report_id}")
+            return False
+
+        logger.info(f"[AAI CALLBACK] Merge done for report {report_id}")
+        return True
 
     except Exception as e:
         logger.error(
             f"[AAI CALLBACK ERROR] tid={transcript_id}: {e}", exc_info=True
         )
+        return False

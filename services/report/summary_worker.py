@@ -220,6 +220,7 @@ async def process_summary(report):
                 "pertemuan_terdeteksi": analysis_raw.get("pertemuan_terdeteksi", "-"),
                 "status_waktu":         analysis_raw.get("status_waktu", "-"),
                 "penjelasan":           analysis_raw.get("penjelasan", "-"),
+                "catatan":              analysis_raw.get("catatan", "-"),
                 "metode_dominan":       analysis_raw.get("metode_dominan", "-"),
                 "kesesuaian_metode":    analysis_raw.get("kesesuaian_metode", "-"),
                 "penjelasan_metode":    analysis_raw.get("penjelasan_metode", "-"),
@@ -242,6 +243,7 @@ async def process_summary(report):
                 kode_dosen=str(report.get("kode_dosen")   or ""),
                 kode_matkul=str(report.get("kode_matkul") or ""),
                 ringkasan=ringkasan_val,
+                catatan=analysis.get("catatan", "-"),
             )
 
             # ── 10. Upload PDF ────────────────────────────────────────

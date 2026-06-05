@@ -120,9 +120,8 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
         # ── STEP 5: Kick off STT + Summary workers ────────────────────
         logger.info(f"[DOWNLOAD WORKER] [4/4] Menjalankan STT worker + Summary worker...")
 
-        from services.worker.worker_manager import start_stt_worker, start_summary_worker
+        from services.worker.worker_manager import start_stt_worker
         await start_stt_worker()
-        await start_summary_worker()
 
         total_elapsed = _fmt_elapsed(time.time() - t_total)
         logger.info(

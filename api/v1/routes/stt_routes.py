@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, Depends
 from services.stt.callback_handler import handle_assemblyai_callback
+from services.worker.worker_manager import start_summary_worker
 from api.v1.deps import require_authenticated
 from core.logger import logger
 
@@ -35,6 +36,10 @@ async def assemblyai_callback(request: Request):
         return {"success": False, "message": "transcript_id tidak ada di payload"}
 
     # Panggil handler (sinkron, tapi cepat — hanya DB + 1 HTTP call ke AAI)
-    handle_assemblyai_callback(transcript_id)
+    merge_done = handle_assemblyai_callback(transcript_id)
+
+    if merge_done:
+        logger.info(f"[WEBHOOK] Merge done → starting summary worker | tid={transcript_id}")
+        await start_summary_worker()
 
     return {"success": True, "transcript_id": transcript_id}
