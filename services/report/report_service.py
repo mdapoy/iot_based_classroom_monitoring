@@ -334,13 +334,13 @@ def generate_combined_pdf(
     c.setFillColor(C_LBL)
     c.setFont("Helvetica", 8)
     c.drawRightString(MR, y, hdr_txt)
-    y -= 22
+    y -= 32
 
     # Title
     c.setFillColor(C_TXT)
     c.setFont("Helvetica-Bold", 24)
     c.drawString(ML, y, "LAPORAN IDENTIFIKASI PEMBELAJARAN")
-    y -= 16
+    y -= 22
 
     # Subtitle — format: FISIKA 2 (AZK1GAB3) | Pertemuan ke-9 | TK-48-GAB1 | MFC
     nm_str  = f"{nama_matkul} ({kode_matkul})" if kode_matkul else nama_matkul
