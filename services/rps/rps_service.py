@@ -114,20 +114,19 @@ def get_all_rps_for_matkul(kode_matkul: str) -> list[dict]:
 
 def get_nama_matkul(kode_matkul: str) -> str:
     """
-    Ambil nama lengkap mata kuliah dari tabel jadwal_kuliah berdasarkan kode_matkul.
-    Digunakan untuk membuat prompt summarizer dan judul PDF yang dinamis.
-    Fallback ke kode_matkul jika tidak ditemukan di tabel jadwal.
+    Ambil nama lengkap mata kuliah dari jadwal_kuliah berdasarkan kode_matkul.
+    Menggunakan in-memory cache (TTL 10 menit) — tidak query DB langsung.
+    Fallback ke kode_matkul jika tidak ditemukan.
     """
     try:
-        res = (
-            supabase.table("jadwal_kuliah")
-            .select("mata_kuliah")
-            .eq("kode_mata_kuliah", kode_matkul)
-            .limit(1)
-            .execute()
+        from repositories.cache import get_all_jadwal
+        jadwal = get_all_jadwal()
+        match = next(
+            (j for j in jadwal if j.get("kode_mata_kuliah") == kode_matkul),
+            None,
         )
-        if res.data:
-            return res.data[0]["mata_kuliah"]
+        if match:
+            return match["mata_kuliah"]
         logger.warning(f"[RPS] nama_matkul not found | kode_matkul={kode_matkul}, fallback ke kode")
         return kode_matkul
 

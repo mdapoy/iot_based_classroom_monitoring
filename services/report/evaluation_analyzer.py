@@ -3,6 +3,9 @@ import asyncio
 from collections import Counter
 from datetime import date
 
+# Batasi LLM call paralel — sama dengan pola semaphore di summary_worker.py
+_LLM_SEMAPHORE = asyncio.Semaphore(2)
+
 from repositories.supabase_client import supabase
 from services.summarizer.summarizer import client, MODELS, classify_gemini_error
 from services.rps.rps_service import SEMESTER_START_DATE, get_meeting_week
@@ -239,20 +242,18 @@ def get_dosen_info(kode_dosen: str) -> dict:
 def get_matkul_for_dosen(kode_dosen: str) -> list[dict]:
     """
     Ambil semua mata kuliah yang diampu dosen ini (dari jadwal_kuliah).
+    Menggunakan in-memory cache (TTL 10 menit) — filter in-memory per dosen.
     Return list of {kode_matkul, nama_matkul}, sudah deduplikasi per kode.
     """
     try:
-        res = (
-            supabase.table("jadwal_kuliah")
-            .select("kode_mata_kuliah, mata_kuliah")
-            .eq("dosen_utama", kode_dosen)
-            .execute()
-        )
+        from repositories.cache import get_all_jadwal
+        jadwal = get_all_jadwal()
         seen: dict[str, str] = {}
-        for r in (res.data or []):
-            kode = r.get("kode_mata_kuliah")
-            if kode and kode not in seen:
-                seen[kode] = r.get("mata_kuliah", kode)
+        for j in jadwal:
+            if j.get("dosen_utama") == kode_dosen:
+                kode = j.get("kode_mata_kuliah")
+                if kode and kode not in seen:
+                    seen[kode] = j.get("mata_kuliah", kode)
         return [{"kode_matkul": k, "nama_matkul": v} for k, v in seen.items()]
     except Exception as e:
         logger.warning(f"[EVAL] get_matkul_for_dosen gagal kode={kode_dosen}: {e}")
@@ -524,11 +525,15 @@ async def build_eval_data(kode_dosen: str, periode: str) -> dict:
         "rekomendasi":   "",   # diisi LLM di bawah
     }
 
-    # ── 9. LLM: kesimpulan per matkul (paralel) ───────────────────────────────
-    logger.info(f"[EVAL] LLM kesimpulan {len(detail_matkul)} matkul (paralel)...")
+    # ── 9. LLM: kesimpulan per matkul (paralel, dibatasi semaphore) ──────────────
+    logger.info(f"[EVAL] LLM kesimpulan {len(detail_matkul)} matkul (paralel, max 2)...")
+
+    async def _limited_kesimpulan(matkul_data: dict) -> str:
+        async with _LLM_SEMAPHORE:
+            return await asyncio.to_thread(_generate_kesimpulan_matkul, matkul_data)
+
     kes_results = await asyncio.gather(*[
-        asyncio.to_thread(_generate_kesimpulan_matkul, m)
-        for m in detail_matkul
+        _limited_kesimpulan(m) for m in detail_matkul
     ])
     for m, kes in zip(detail_matkul, kes_results):
         m["kesimpulan"] = kes

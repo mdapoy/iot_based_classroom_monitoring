@@ -22,7 +22,7 @@ async def generate_report(data: dict):
         # Tidak gunakan ruangan di cache-check karena formatnya bisa beda
         # antara request (KU3.04.17) dan nama file GDrive (KU3-0417).
         # Kombinasi tanggal + jam + matkul + dosen + kelas sudah unik.
-        existing = supabase.table(TABLE).select("*").match({
+        existing = supabase.table(TABLE).select("id, status, transcript_path").match({
             "tanggal":    data["tanggal"],
             "jam":        data["jam"],
             "kode_matkul": data["kode_matkul"],

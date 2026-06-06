@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends
 from services.storage.gdrive_video import list_videos, list_audios
 from utils.metadata_parser import parse_filename_monitoring
-from services.scheduler.scheduler import find_jadwal
 from repositories.supabase_client import supabase
+from repositories.cache import get_all_jadwal
 from api.v1.deps import require_admin, require_authenticated, optional_authenticated
 from core.logger import logger
 import time
@@ -44,19 +44,36 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
     audio_map = {}
 
     for audio in audios:
-
         base_name = audio["name"].rsplit(".", 1)[0]
-
         audio_map[base_name] = {
             "id": audio["id"],
             "name": audio["name"]
         }
 
     # =========================
+    # PRE-FETCH (1 query) — set semua video_file_id yang sudah ada di DB
+    # Menggantikan N query existence-check di dalam loop
+    # =========================
+    existing_res = supabase.table("monitoring").select("video_file_id").execute()
+    existing_ids = {r["video_file_id"] for r in (existing_res.data or [])}
+
+    # =========================
+    # JADWAL INDEX (0 query) — dari cache, di-index per (kode_matkul, dosen, kelas)
+    # Menggantikan N query find_jadwal() di dalam loop
+    # =========================
+    jadwal_list  = get_all_jadwal()
+    jadwal_index = {
+        (j["kode_mata_kuliah"], j["dosen_utama"], j["kelas"]): j
+        for j in jadwal_list
+        if j.get("kode_mata_kuliah") and j.get("dosen_utama") and j.get("kelas")
+    }
+
+    # =========================
     # LOOP VIDEO
     # =========================
     skipped_parse  = []
     skipped_jadwal = []
+    rows_to_insert = []   # kumpulkan dulu, batch insert setelah loop
 
     for video in videos:
 
@@ -67,11 +84,12 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
             logger.warning(f"[SCAN] Gagal parse filename: {video['name']}")
             continue
 
-        jadwal = find_jadwal(
+        # Dict lookup O(1) — tidak ada query ke DB
+        jadwal = jadwal_index.get((
             parsed["kode_matkul"],
             parsed["kode_dosen"],
-            parsed["kelas"]
-        )
+            parsed["kelas"],
+        ))
 
         if not jadwal:
             skipped_jadwal.append({
@@ -94,14 +112,15 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
         base_filename = video["name"].rsplit(".", 1)[0]
 
         # =========================
+        # CHECK EXIST — set lookup O(1), tidak ada query ke DB
+        # =========================
+        if video["id"] in existing_ids:
+            continue
+
+        # =========================
         # FIND MATCH AUDIO
         # =========================
-        matched_audio = audio_map.get(base_filename)
-
-        audio_id = None
-
-        if matched_audio:
-            audio_id = matched_audio["id"]
+        audio_id = audio_map.get(base_filename, {}).get("id")
 
         # =========================
         # VIDEO URL
@@ -109,40 +128,26 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
         video_url = f"https://drive.google.com/file/d/{video['id']}/preview"
 
         # =========================
-        # CHECK EXIST
+        # KUMPULKAN UNTUK BATCH INSERT
         # =========================
-        exist = (
-            supabase
-            .table("monitoring")
-            .select("*")
-            .eq("video_file_id", video["id"])
-            .execute()
-        )
-
-        if len(exist.data) > 0:
-            continue
-
-        # =========================
-        # INSERT
-        # =========================
-        supabase.table("monitoring").insert({
-
-            "jadwal_id": jadwal["id"],
-            "tanggal": str(parsed["tanggal"]),
-
-            "kehadiran": "Tepat Waktu",
+        rows_to_insert.append({
+            "jadwal_id":      jadwal["id"],
+            "tanggal":        str(parsed["tanggal"]),
+            "kehadiran":      "Tepat Waktu",
             "aktivitas_dominan": "Ceramah",
-
-            "video_url": video_url,
-            "video_file_id": video["id"],
-
-            "audio_file_id": audio_id,
-
-            "base_filename": base_filename
-
-        }).execute()
+            "video_url":      video_url,
+            "video_file_id":  video["id"],
+            "audio_file_id":  audio_id,
+            "base_filename":  base_filename,
+        })
 
         inserted.append(video["name"])
+
+    # =========================
+    # BATCH INSERT (1 query) — menggantikan N query INSERT di dalam loop
+    # =========================
+    if rows_to_insert:
+        supabase.table("monitoring").insert(rows_to_insert).execute()
 
     logger.info(
         f"[SCAN] Selesai | inserted={len(inserted)} "

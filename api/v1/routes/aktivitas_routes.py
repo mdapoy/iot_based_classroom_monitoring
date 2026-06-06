@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query
 from repositories.supabase_client import supabase
+from repositories.cache import get_all_jadwal
 from datetime import date, timedelta
 from typing import Optional
 from collections import defaultdict
@@ -46,14 +47,8 @@ def _fetch_stats(
 
     stats = q.execute().data or []
 
-    # ── ambil jadwal_kuliah utk enrichment ──
-    jadwal_rows = (
-        supabase.table("jadwal_kuliah")
-        .select("id, kode_mata_kuliah, mata_kuliah, kelas, dosen_utama")
-        .execute()
-        .data
-        or []
-    )
+    # ── ambil jadwal_kuliah utk enrichment (dari cache) ──
+    jadwal_rows = get_all_jadwal()
 
     # index: by id, by kode_matkul (list)
     by_id: dict = {j["id"]: j for j in jadwal_rows}
@@ -310,13 +305,7 @@ def get_trend(
 @router.get("/options")
 def get_options():
     # Untuk aktivitas pakai dosen_utama (kode_dosen string di jadwal_kuliah)
-    jadwal = (
-        supabase.table("jadwal_kuliah")
-        .select("kelas, dosen_utama")
-        .execute()
-        .data
-        or []
-    )
+    jadwal = get_all_jadwal()
 
     dosen_set = sorted({j["dosen_utama"] for j in jadwal if j.get("dosen_utama")})
     kelas_set = sorted({j["kelas"]       for j in jadwal if j.get("kelas")})

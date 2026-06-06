@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query
 from repositories.supabase_client import supabase
+from repositories.cache import get_all_jadwal
 from datetime import date, timedelta
 from typing import Optional
 
@@ -14,13 +15,7 @@ def get_summary(
     range_days: int = Query(180, description="rentang hari utk menghitung tepat_waktu_pct"),
 ):
     # ── total kelas (distinct kelas dari jadwal_kuliah) ──
-    jadwal_rows = (
-        supabase.table("jadwal_kuliah")
-        .select("kelas, kode_mata_kuliah")
-        .execute()
-        .data
-        or []
-    )
+    jadwal_rows = get_all_jadwal()
 
     total_kelas  = len({j["kelas"]            for j in jadwal_rows if j.get("kelas")})
     total_matkul = len({j["kode_mata_kuliah"] for j in jadwal_rows if j.get("kode_mata_kuliah")})

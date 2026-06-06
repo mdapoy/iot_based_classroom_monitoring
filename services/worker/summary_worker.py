@@ -311,7 +311,7 @@ async def run_summary_worker():
         try:
             res = (
                 supabase.table("reports")
-                .select("*")
+                .select("id, tanggal, kode_matkul, kelas, kode_dosen, monitoring_id, status")
                 .eq("status", "transcribed")
                 .limit(3)
                 .execute()

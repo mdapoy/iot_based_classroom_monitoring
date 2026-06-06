@@ -137,7 +137,7 @@ async def run_worker():
         try:
             res = (
                 supabase.table("audio_chunks")
-                .select("*")
+                .select("id, report_id, chunk_index, status, chunk_path, updated_at")
                 .in_("status", ["pending", "failed"])
                 .limit(5)
                 .execute()

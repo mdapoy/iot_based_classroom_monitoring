@@ -2,8 +2,8 @@ import asyncio
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, field_validator
 
 from repositories.supabase_client import supabase
 from services.report.evaluation_analyzer import (
@@ -16,9 +16,13 @@ from services.report.evaluation_analyzer import (
 )
 from services.report.evaluation_service import generate_evaluation_pdf
 from services.storage.storage_service import upload_evaluation, get_public_evaluation_url
+from core.limiter import limiter
 from core.logger import logger
 
 router = APIRouter(prefix="/evaluation", tags=["Evaluasi Dosen"])
+
+# Simpan referensi task agar tidak di-cancel oleh GC diam-diam
+_background_tasks: set = set()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -28,6 +32,22 @@ router = APIRouter(prefix="/evaluation", tags=["Evaluasi Dosen"])
 class GenerateRequest(BaseModel):
     kode_dosen: str
     periode: str   # "1-7" | "9-15" | "1-15"
+
+    @field_validator("kode_dosen")
+    @classmethod
+    def validate_kode_dosen(cls, v: str) -> str:
+        v = v.strip().upper()
+        if not v or len(v) > 10 or not v.isalnum():
+            raise ValueError("kode_dosen harus alfanumerik, maksimal 10 karakter")
+        return v
+
+    @field_validator("periode")
+    @classmethod
+    def validate_periode(cls, v: str) -> str:
+        allowed = {"1-7", "9-15", "1-15"}
+        if v not in allowed:
+            raise ValueError(f"periode harus salah satu dari: {allowed}")
+        return v
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -151,7 +171,8 @@ def prerequisite_check(
 
 
 @router.post("/generate")
-async def generate_evaluation(req: GenerateRequest):
+@limiter.limit("5/minute")   # max 5 generate per IP per menit (endpoint berat — panggil LLM)
+async def generate_evaluation(request: Request, req: GenerateRequest):
     """
     Trigger generate laporan evaluasi dosen.
 
@@ -227,7 +248,9 @@ async def generate_evaluation(req: GenerateRequest):
     eval_id = ins_res.data[0]["id"]
 
     # ── 5. Start background task ───────────────────────────────────────────────
-    asyncio.create_task(_run_evaluation(eval_id, req.kode_dosen, req.periode))
+    task = asyncio.create_task(_run_evaluation(eval_id, req.kode_dosen, req.periode))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     logger.info(
         f"[EVAL ROUTE] Task started eval_id={eval_id} "

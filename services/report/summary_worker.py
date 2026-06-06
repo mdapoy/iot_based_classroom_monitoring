@@ -115,6 +115,8 @@ async def process_summary(report):
                 .execute()
             )
 
+            if not fresh.data:
+                raise Exception(f"Report {report_id} tidak ditemukan di DB")
             path = fresh.data.get("transcript_path")
             if not path:
                 raise Exception("Transcript path not found")
@@ -177,7 +179,8 @@ async def process_summary(report):
             if not summary_result.get("success"):
                 raise Exception(summary_result.get("error", "Summarize gagal"))
 
-            ringkasan_val = summary_result.get("ringkasan", {"pembuka": "", "poin": []})
+            _ring         = summary_result.get("ringkasan", {})
+            ringkasan_val = _ring if isinstance(_ring, dict) else {"pembuka": "", "poin": []}
             detail_val    = summary_result.get("detail",    "")
 
             # Fallback: kalau detail kosong coba ambil dari key lama
@@ -323,7 +326,7 @@ async def run_summary_worker():
         try:
             res = (
                 supabase.table("reports")
-                .select("*")
+                .select("id, tanggal, kode_matkul, kelas, kode_dosen, monitoring_id, status")
                 .eq("status", "transcribed")
                 .limit(3)
                 .execute()

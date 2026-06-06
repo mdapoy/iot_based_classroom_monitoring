@@ -8,7 +8,7 @@ def cleanup_chunks(report_id: int):
 
         # ambil semua chunk
         res = supabase.table("audio_chunks") \
-            .select("*") \
+            .select("id, chunk_path") \
             .eq("report_id", report_id) \
             .execute()
 

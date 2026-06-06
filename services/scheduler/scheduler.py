@@ -1,19 +1,18 @@
-from repositories.supabase_client import supabase
+from repositories.cache import get_all_jadwal
 
 
 def find_jadwal(kode_matkul, kode_dosen, kelas):
-
-    res = (
-        supabase
-        .table("jadwal_kuliah")
-        .select("*")
-        .eq("kode_mata_kuliah", kode_matkul)
-        .eq("dosen_utama", kode_dosen)
-        .eq("kelas", kelas)
-        .execute()
+    """
+    Cari jadwal berdasarkan kode_matkul, kode_dosen, dan kelas.
+    Menggunakan in-memory cache (TTL 10 menit) — tidak query DB langsung.
+    """
+    jadwal = get_all_jadwal()
+    return next(
+        (
+            j for j in jadwal
+            if j.get("kode_mata_kuliah") == kode_matkul
+            and j.get("dosen_utama") == kode_dosen
+            and j.get("kelas") == kelas
+        ),
+        None,
     )
-
-    if len(res.data) == 0:
-        return None
-
-    return res.data[0]

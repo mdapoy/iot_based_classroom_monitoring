@@ -1,5 +1,6 @@
 import pandas as pd
 from repositories.supabase_client import supabase
+from repositories.cache import invalidate_jadwal_cache
 
 REQUIRED_COLUMNS = {"hari", "kode_mata_kuliah", "nama_mata_kuliah", "dosen", "kelas", "shift"}
 
@@ -67,6 +68,7 @@ def process_xlsx(file):
 
     if new_data:
         supabase.table("jadwal_kuliah").insert(new_data).execute()
+        invalidate_jadwal_cache()   # data jadwal berubah — paksa refresh cache
 
     return {
         "status":        "success",

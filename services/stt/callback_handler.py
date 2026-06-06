@@ -60,7 +60,7 @@ def handle_assemblyai_callback(transcript_id: str) -> bool:
         # ── 1. Cari chunk ────────────────────────────────────────────
         chunk_res = (
             supabase.table("audio_chunks")
-            .select("*")
+            .select("id, report_id, chunk_index, status")
             .eq("task_id", transcript_id)
             .execute()
         )

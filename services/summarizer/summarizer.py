@@ -14,7 +14,6 @@ MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite"
 ]
 
 def classify_gemini_error(error: str):
@@ -160,7 +159,7 @@ Berikut transkrip:
 
                 return {
                     "success":   True,
-                    "ringkasan": ringkasan,   # list[str], maks 8 poin
+                    "ringkasan": ringkasan,   # {"pembuka": str, "poin": list[str]}
                     "detail":    detail,      # str paragraf
                     "model":     model_name,
                 }
@@ -211,8 +210,8 @@ Berikut transkrip:
     logger.error("[SUMMARY FAILED] all models failed")
 
     return {
-        "success":  False,
-        "ringkasan": "",
+        "success":   False,
+        "ringkasan": {"pembuka": "", "poin": []},
         "detail":    "",
         "error":     "Semua model Gemini gagal"
     }

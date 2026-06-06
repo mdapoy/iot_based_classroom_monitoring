@@ -265,8 +265,9 @@ def get_dashboard(
 # =========================================================
 @router.get("/options")
 def get_options():
-    dosen = supabase.table("dosen").select("kode_dosen, nama_lengkap").eq("aktif", True).execute().data or []
-    kelas = supabase.table("jadwal_kuliah").select("kelas").execute().data or []
+    from repositories.cache import get_all_jadwal, get_all_dosen
+    dosen = get_all_dosen()
+    kelas = get_all_jadwal()
 
     return {
         "dosen": [{"kode": d["kode_dosen"], "nama": (d.get("nama_lengkap") or "").strip()} for d in dosen],

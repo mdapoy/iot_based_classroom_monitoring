@@ -111,44 +111,45 @@ async def upload_rps_csv(
         if not rows:
             raise HTTPException(status_code=400, detail="CSV tidak memiliki baris data")
 
-        # Proses per-baris agar baris yang gagal dilaporkan
-        # tanpa menggagalkan seluruh upload
-        successful = []
-        skipped_rows = []
+        # ── Validasi tipe data per baris di Python (tanpa query ke DB) ──────
+        validated    = []
+        invalid_rows = []
 
         for row in rows:
             try:
-                res = (
-                    supabase.table("rps_pertemuan")
-                    .upsert(row, on_conflict="kode_matkul,pertemuan_ke")
-                    .execute()
-                )
-                if res.data:
-                    successful.append(row)
-                else:
-                    skipped_rows.append({
-                        "kode_matkul":  row.get("kode_matkul"),
-                        "pertemuan_ke": row.get("pertemuan_ke"),
-                        "reason":       "Upsert tidak mengembalikan data",
-                    })
-            except Exception as row_err:
-                skipped_rows.append({
+                row["pertemuan_ke"] = int(row["pertemuan_ke"])
+                validated.append(row)
+            except (ValueError, TypeError):
+                invalid_rows.append({
                     "kode_matkul":  row.get("kode_matkul"),
                     "pertemuan_ke": row.get("pertemuan_ke"),
-                    "reason":       str(row_err),
+                    "reason":       "pertemuan_ke bukan angka valid",
                 })
 
-        count = len(successful)
+        if not validated:
+            raise HTTPException(
+                status_code=400,
+                detail="Tidak ada baris valid setelah validasi. Periksa kolom pertemuan_ke."
+            )
+
+        # ── Bulk upsert — 1 round-trip ke DB untuk semua baris valid ────────
+        res = (
+            supabase.table("rps_pertemuan")
+            .upsert(validated, on_conflict="kode_matkul,pertemuan_ke")
+            .execute()
+        )
+        count = len(res.data or [])
 
         logger.info(
-            f"[RPS CSV] Uploaded | success={count} skipped={len(skipped_rows)} "
+            f"[RPS CSV] Uploaded | success={count} "
+            f"invalid={len(invalid_rows)} auto_skipped={auto_skipped} "
             f"kode_matkul={df['kode_matkul'].unique().tolist()}"
         )
 
-        total_skipped = len(skipped_rows) + auto_skipped
-        skip_errors   = skipped_rows.copy()
+        # ── Susun laporan error ──────────────────────────────────────────────
+        all_errors = invalid_rows.copy()
         if auto_skipped > 0:
-            skip_errors.append({
+            all_errors.append({
                 "kode_matkul":  "-",
                 "pertemuan_ke": "-",
                 "reason": (
@@ -157,12 +158,14 @@ async def upload_rps_csv(
                 ),
             })
 
+        total_skipped = len(invalid_rows) + auto_skipped
+
         return {
             "status":        "success",
             "message":       f"{count} baris RPS berhasil disimpan.",
             "rows_upserted": count,
             "skipped":       total_skipped,
-            "errors":        skip_errors,
+            "errors":        all_errors,
         }
 
     except HTTPException:
