@@ -65,33 +65,33 @@ def summarize_text(transcript: str, nama_matkul: str = "mata kuliah", max_retrie
 
     logger.info(f"[SUMMARY] transcript_length={len(transcript)} nama_matkul={nama_matkul}")
 
-    prompt = f"""Anda adalah peringkas profesional rekaman kuliah {nama_matkul}.
+    prompt = f"""Anda adalah analis rekaman kuliah {nama_matkul}. Tugas Anda adalah menggambarkan kegiatan yang terjadi di kelas berdasarkan transkrip.
 
 Hasilkan DUA bagian:
 
-1. RINGKASAN: Terdiri dari kalimat pembuka (1 kalimat) yang menggambarkan topik umum perkuliahan, diikuti poin-poin dengan urutan berikut:
-   - Poin 1  : Topik atau konsep utama yang diperkenalkan
-   - Poin 2  : Sub-topik atau pembagian materi
-   - Poin 3  : Rumus atau metode kunci yang dibahas
-   - Poin 4  : Contoh soal atau kasus yang dikerjakan (jika ada)
-   - Poin 5  : Kesimpulan atau poin penting dari dosen
-   - Poin 6-8: Topik lanjutan atau pembahasan tambahan (jika ada)
-   Sertakan hanya poin yang memang ada dalam transkrip. Maksimal 8 poin.
+1. RINGKASAN: Terdiri dari kalimat pembuka (1 kalimat) yang menggambarkan kegiatan umum perkuliahan, diikuti tepat 6 poin yang menggambarkan jalannya kelas:
+   - Poin 1: Topik utama dan cara dosen memperkenalkan atau membuka materi
+   - Poin 2: Konsep atau rumus kunci yang disampaikan dosen
+   - Poin 3: Metode penyampaian yang digunakan (ceramah, diskusi, tanya jawab, atau kombinasi)
+   - Poin 4: Interaksi atau pertanyaan yang muncul di kelas (jika tidak ada, tuliskan kondisi kelas)
+   - Poin 5: Poin penting atau hal yang ditekankan oleh dosen
+   - Poin 6: Arahan, penutup, atau catatan akhir pertemuan dari dosen (jika tidak ada, tuliskan kesimpulan umum)
 
-2. DETAIL: Satu paragraf panjang yang menjelaskan seluruh materi secara rinci dan mengalir, mencakup konsep, rumus, contoh, dan penjelasan lengkap.
+2. DETAIL: Satu paragraf panjang yang menjelaskan seluruh kegiatan dan materi secara rinci dan mengalir.
 
 Kembalikan HANYA dalam format JSON berikut (tanpa teks lain di luar JSON):
 {{
   "ringkasan": {{
-    "pembuka": "Kalimat pembuka yang menggambarkan topik umum perkuliahan.",
-    "poin": ["poin 1", "poin 2", "poin 3"]
+    "pembuka": "Kalimat pembuka yang menggambarkan kegiatan umum perkuliahan.",
+    "poin": ["poin 1", "poin 2", "poin 3", "poin 4", "poin 5", "poin 6"]
   }},
   "detail": "paragraf detail lengkap..."
 }}
 
 ATURAN WAJIB:
-- PEMBUKA: 1 kalimat singkat yang merangkum topik umum perkuliahan.
-- POIN: array of string, masing-masing 1 kalimat singkat dan padat, maksimal 8 elemen.
+- PEMBUKA: 1 kalimat singkat yang menggambarkan kegiatan umum perkuliahan.
+- POIN: array of string, tepat 6 elemen, masing-masing 1 kalimat singkat dan padat.
+- Setiap poin harus mencerminkan kegiatan nyata di kelas berdasarkan transkrip.
 - DETAIL: paragraf mengalir tanpa poin-poin, tanpa penomoran, tanpa simbol markdown (**, *, #, -).
 - Jika perlu menyebut urutan di detail, gunakan: "pertama", "selanjutnya", "kemudian", "terakhir".
 - Bahasa Indonesia yang jelas dan mudah dipahami.
@@ -132,12 +132,12 @@ Berikut transkrip:
                         if isinstance(raw_ring, dict):
                             pembuka = str(raw_ring.get("pembuka", "")).strip()
                             poin    = raw_ring.get("poin", [])
-                            poin    = [str(p).strip() for p in poin[:8] if str(p).strip()]
+                            poin    = [str(p).strip() for p in poin[:6] if str(p).strip()]
                             ringkasan = {"pembuka": pembuka, "poin": poin}
 
                         elif isinstance(raw_ring, list):
                             # Fallback: model kembalikan array langsung
-                            poin      = [str(p).strip() for p in raw_ring[:8] if str(p).strip()]
+                            poin      = [str(p).strip() for p in raw_ring[:6] if str(p).strip()]
                             ringkasan = {"pembuka": "", "poin": poin}
 
                         elif isinstance(raw_ring, str) and raw_ring.strip():

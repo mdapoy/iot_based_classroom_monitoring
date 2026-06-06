@@ -398,7 +398,7 @@ def generate_combined_pdf(
             y = _para(c, pembuka, ST_PEMBUKA, ML, y, CW)
             y -= 8
 
-        for item in bullet_items[:8]:
+        for item in bullet_items[:6]:
             txt = f"•  {item.strip()}"
             y   = _para(c, txt, ST_BULLET, ML + 4, y, CW - 4)
             y  -= 3
