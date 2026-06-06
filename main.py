@@ -129,6 +129,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth_routes.router)
+app.include_router(tahun_ajaran_routes.router)
 app.include_router(xlsx_routes.router)
 app.include_router(scheduled_routes.router)
 app.include_router(stt_routes.router)
@@ -140,4 +141,3 @@ app.include_router(aktivitas_routes.router)
 app.include_router(dashboard_routes.router)
 app.include_router(kehadiran_routes.router)
 app.include_router(evaluation_routes.router)
-app.include_router(tahun_ajaran_routes.router)
