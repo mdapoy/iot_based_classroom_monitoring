@@ -33,3 +33,21 @@ def upload_summary(local_path, storage_path):
 
 def get_public_summary_url(filename: str):
     return supabase.storage.from_(BUCKET_SUMMARY).get_public_url(filename)
+
+BUCKET_EVALUATION = "evaluasi"
+
+def upload_evaluation(local_path: str, storage_path: str) -> str:
+    """Upload PDF laporan evaluasi ke bucket 'evaluasi'."""
+    mime_type, _ = mimetypes.guess_type(local_path)
+
+    with open(local_path, "rb") as f:
+        supabase.storage.from_(BUCKET_EVALUATION).upload(
+            storage_path,
+            f,
+            {"content-type": mime_type or "application/pdf"},
+        )
+
+    return supabase.storage.from_(BUCKET_EVALUATION).get_public_url(storage_path)
+
+def get_public_evaluation_url(filename: str) -> str:
+    return supabase.storage.from_(BUCKET_EVALUATION).get_public_url(filename)

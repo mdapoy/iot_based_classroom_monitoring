@@ -258,6 +258,11 @@ async def process_summary(report):
                 "error_message":  None,
             }
 
+            # Simpan hasil analisis RAG ke kolom baru (dibutuhkan laporan evaluasi)
+            update_payload["kesesuaian_materi"] = analysis_raw.get("kesesuaian",        "-")
+            update_payload["status_waktu"]      = analysis_raw.get("status_waktu",      "-")
+            update_payload["kesesuaian_metode"] = analysis_raw.get("kesesuaian_metode", "-")
+
             if activity_result:
                 # Simpan ringkasan aktivitas (tanpa activity_timeline panjang)
                 update_payload["activity_summary"] = {

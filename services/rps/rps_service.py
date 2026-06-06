@@ -17,7 +17,11 @@ for s in _raw_skip.split(","):
     s = s.strip()
     if s:
         try:
-            SKIP_WEEK_MONDAYS.add(date.fromisoformat(s))
+            d = date.fromisoformat(s)
+            # Normalisasi ke Senin agar cocok dengan iterasi get_meeting_week()
+            # Contoh: 2026-05-27 (Rabu) → 2026-05-25 (Senin)
+            monday = d - timedelta(days=d.weekday())
+            SKIP_WEEK_MONDAYS.add(monday)
         except ValueError:
             logger.warning(f"[RPS] Format SKIP_WEEKS salah, abaikan: '{s}'")
 

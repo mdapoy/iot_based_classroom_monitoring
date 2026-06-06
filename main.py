@@ -17,6 +17,7 @@ from api.v1.routes import (
     aktivitas_routes,
     dashboard_routes,
     kehadiran_routes,
+    evaluation_routes,
 )
 
 origins = ["*"]
@@ -59,6 +60,7 @@ app.include_router(monitoring_routes.router)
 app.include_router(aktivitas_routes.router)
 app.include_router(dashboard_routes.router)
 app.include_router(kehadiran_routes.router)
+app.include_router(evaluation_routes.router)
 
 # from fastapi import FastAPI
 
