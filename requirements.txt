@@ -15,4 +15,4 @@ Requests~=2.33.1
 supabase~=2.30.0
 google-genai~=0.8.0
 httpx>=0.27.0
-slowapi~=0.5.1
+slowapi~=0.1.9
