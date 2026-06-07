@@ -32,6 +32,7 @@ _background_tasks: set = set()
 class GenerateRequest(BaseModel):
     kode_dosen: str
     periode: str   # "1-7" | "9-15" | "1-15"
+    tahun_ajaran_id: Optional[str] = None
 
     @field_validator("kode_dosen")
     @classmethod
@@ -54,7 +55,12 @@ class GenerateRequest(BaseModel):
 # Background task — orkestrator utama
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _run_evaluation(eval_id: int, kode_dosen: str, periode: str) -> None:
+async def _run_evaluation(
+    eval_id: int,
+    kode_dosen: str,
+    periode: str,
+    tahun_ajaran_id: Optional[str] = None,
+) -> None:
     """
     Background async task:
       1. Agregasi data + LLM (build_eval_data)
@@ -71,8 +77,11 @@ async def _run_evaluation(eval_id: int, kode_dosen: str, periode: str) -> None:
         }).eq("id", eval_id).execute()
 
         # ── Build data (DB queries + LLM calls) ───────────────────────────────
-        logger.info(f"[EVAL ROUTE] Start build_eval_data eval_id={eval_id}")
-        eval_data = await build_eval_data(kode_dosen, periode)
+        logger.info(
+            f"[EVAL ROUTE] Start build_eval_data eval_id={eval_id} "
+            f"tahun_ajaran_id={tahun_ajaran_id}"
+        )
+        eval_data = await build_eval_data(kode_dosen, periode, tahun_ajaran_id=tahun_ajaran_id)
 
         # ── Generate PDF ──────────────────────────────────────────────────────
         os.makedirs("temp", exist_ok=True)
@@ -248,13 +257,16 @@ async def generate_evaluation(request: Request, req: GenerateRequest):
     eval_id = ins_res.data[0]["id"]
 
     # ── 5. Start background task ───────────────────────────────────────────────
-    task = asyncio.create_task(_run_evaluation(eval_id, req.kode_dosen, req.periode))
+    task = asyncio.create_task(
+        _run_evaluation(eval_id, req.kode_dosen, req.periode, req.tahun_ajaran_id)
+    )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
     logger.info(
         f"[EVAL ROUTE] Task started eval_id={eval_id} "
-        f"kode_dosen={req.kode_dosen} periode={req.periode}"
+        f"kode_dosen={req.kode_dosen} periode={req.periode} "
+        f"tahun_ajaran_id={req.tahun_ajaran_id}"
     )
 
     return {

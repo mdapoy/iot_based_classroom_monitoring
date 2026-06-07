@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from services.storage.gdrive_video import list_videos, list_audios
 from utils.metadata_parser import parse_filename_monitoring
 from repositories.supabase_client import supabase
 from repositories.cache import get_all_jadwal
 from api.v1.deps import require_admin, require_authenticated, optional_authenticated
 from core.logger import logger
+from typing import Optional
 import time
 import os
 
@@ -165,9 +166,21 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
     }
     
 @router.get("/monitoring")
-def get_monitoring(user: dict = Depends(optional_authenticated)):
-
-    monitoring = supabase.table("monitoring").select("*, jadwal_kuliah(*)").execute()
+def get_monitoring(
+    tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+    user: dict = Depends(optional_authenticated),
+):
+    if tahun_ajaran_id:
+        # !inner → hanya monitoring yang punya jadwal, lalu filter TA-nya
+        monitoring = (
+            supabase.table("monitoring")
+            .select("*, jadwal_kuliah!inner(*)")
+            .eq("jadwal_kuliah.tahun_ajaran_id", tahun_ajaran_id)
+            .execute()
+        )
+        logger.info(f"[MONITORING] get_monitoring filtered by tahun_ajaran_id={tahun_ajaran_id}")
+    else:
+        monitoring = supabase.table("monitoring").select("*, jadwal_kuliah(*)").execute()
 
     data = []
 

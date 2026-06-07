@@ -2,6 +2,7 @@ import time
 import asyncio
 from collections import Counter
 from datetime import date
+from typing import Optional
 
 # Batasi LLM call paralel — sama dengan pola semaphore di summary_worker.py
 _LLM_SEMAPHORE = asyncio.Semaphore(2)
@@ -362,12 +363,19 @@ def check_prerequisites(kode_dosen: str, periode: str) -> dict:
     return {"ok": len(missing) == 0, "missing": missing}
 
 
-async def build_eval_data(kode_dosen: str, periode: str) -> dict:
+async def build_eval_data(
+    kode_dosen: str,
+    periode: str,
+    tahun_ajaran_id: Optional[str] = None,
+) -> dict:
     """
     Bangun seluruh data laporan evaluasi:
       - Agregasi KPI per matkul dari DB
       - LLM: kesimpulan per matkul (paralel)
       - LLM: rekomendasi global
+
+    tahun_ajaran_id opsional — jika disertakan, dipakai untuk filter laporan
+    ke TA tertentu (fitur masa depan; saat ini diteruskan sebagai konteks saja).
 
     Return dict lengkap siap dipakai evaluation_service.generate_evaluation_pdf().
     """

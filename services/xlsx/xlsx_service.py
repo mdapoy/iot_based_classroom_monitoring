@@ -1,11 +1,12 @@
 import pandas as pd
 from repositories.supabase_client import supabase
 from repositories.cache import invalidate_jadwal_cache
+from typing import Optional
 
 REQUIRED_COLUMNS = {"hari", "kode_mata_kuliah", "nama_mata_kuliah", "dosen", "kelas", "shift"}
 
 
-def process_xlsx(file):
+def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
 
     df = pd.read_excel(file, engine="openpyxl")
 
@@ -67,6 +68,9 @@ def process_xlsx(file):
     ]
 
     if new_data:
+        if tahun_ajaran_id:
+            for row in new_data:
+                row["tahun_ajaran_id"] = tahun_ajaran_id
         supabase.table("jadwal_kuliah").insert(new_data).execute()
         invalidate_jadwal_cache()   # data jadwal berubah — paksa refresh cache
 

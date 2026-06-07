@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
 from repositories.supabase_client import supabase
 from repositories.cache import get_all_jadwal
+from core.logger import logger
 from datetime import date, timedelta
 from typing import Optional
 from collections import defaultdict
@@ -34,6 +35,7 @@ def _fetch_stats(
     kelas: Optional[str] = None,
     start: Optional[date] = None,
     end: Optional[date] = None,
+    tahun_ajaran_id: Optional[str] = None,
 ):
     q = supabase.table("activity_stats").select(
         "id, tanggal, kode_matkul, pertemuan_ke, "
@@ -50,6 +52,10 @@ def _fetch_stats(
     # ── ambil jadwal_kuliah utk enrichment (dari cache) ──
     jadwal_rows = get_all_jadwal()
 
+    # Filter jadwal berdasarkan tahun_ajaran_id sebelum membangun index
+    if tahun_ajaran_id:
+        jadwal_rows = [j for j in jadwal_rows if j.get("tahun_ajaran_id") == tahun_ajaran_id]
+
     # index: by id, by kode_matkul (list)
     by_id: dict = {j["id"]: j for j in jadwal_rows}
     by_kode: dict = defaultdict(list)
@@ -64,6 +70,10 @@ def _fetch_stats(
             j = by_id[s["jadwal_id"]]
         elif s.get("kode_matkul") in by_kode:
             j = by_kode[s["kode_matkul"]][0]
+
+        # Kalau TA filter aktif, buang stats yang tidak match jadwal TA ini
+        if tahun_ajaran_id and j is None:
+            continue
 
         s["mata_kuliah"]  = (j or {}).get("mata_kuliah")
         s["kelas"]        = (j or {}).get("kelas")
@@ -87,11 +97,12 @@ def get_summary(
     dosen: Optional[str] = None,
     kelas: Optional[str] = None,
     range_days: int = Query(180, description="rentang hari ke belakang"),
+    tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
 ):
     end = date.today()
     start = end - timedelta(days=range_days)
 
-    rows = _fetch_stats(dosen, kelas, start, end)
+    rows = _fetch_stats(dosen, kelas, start, end, tahun_ajaran_id=tahun_ajaran_id)
 
     # weighted by detik agar lebih akurat dari rata-rata persen
     total_sec = sum(
@@ -151,11 +162,12 @@ def get_per_matkul(
     dosen: Optional[str] = None,
     kelas: Optional[str] = None,
     range_days: int = 180,
+    tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
 ):
     end = date.today()
     start = end - timedelta(days=range_days)
 
-    rows = _fetch_stats(dosen, kelas, start, end)
+    rows = _fetch_stats(dosen, kelas, start, end, tahun_ajaran_id=tahun_ajaran_id)
 
     agg: dict[str, dict] = {}
     for r in rows:
@@ -214,10 +226,11 @@ def get_dashboard(
     dosen: Optional[str] = None,
     kelas: Optional[str] = None,
     range_days: int = 180,
+    tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
 ):
     return {
-        "summary":    get_summary(dosen, kelas, range_days),
-        "per_matkul": get_per_matkul(dosen, kelas, range_days),
+        "summary":    get_summary(dosen, kelas, range_days, tahun_ajaran_id),
+        "per_matkul": get_per_matkul(dosen, kelas, range_days, tahun_ajaran_id),
     }
 
 
@@ -303,9 +316,15 @@ def get_trend(
 # 5. OPTIONS (dropdown filter)
 # =========================================================
 @router.get("/options")
-def get_options():
+def get_options(
+    tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+):
     # Untuk aktivitas pakai dosen_utama (kode_dosen string di jadwal_kuliah)
     jadwal = get_all_jadwal()
+
+    if tahun_ajaran_id:
+        jadwal = [j for j in jadwal if j.get("tahun_ajaran_id") == tahun_ajaran_id]
+        logger.info(f"[AKTIVITAS] options filtered by tahun_ajaran_id={tahun_ajaran_id} → {len(jadwal)} jadwal")
 
     dosen_set = sorted({j["dosen_utama"] for j in jadwal if j.get("dosen_utama")})
     kelas_set = sorted({j["kelas"]       for j in jadwal if j.get("kelas")})

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from repositories.supabase_client import supabase
 from models.rps_schema import RPSRequest
 from api.v1.deps import optional_authenticated
 from utils.file_validator import validate_csv
 from core.logger import logger
+from typing import Optional
 import pandas as pd
 import io
 
@@ -22,6 +23,8 @@ def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authent
         "materi_pembelajaran": data.materi.strip(),
         "pengalaman_pembelajaran_mahasiswa": data.pengalaman.strip(),
     }
+    if data.tahun_ajaran_id:
+        payload["tahun_ajaran_id"] = data.tahun_ajaran_id
 
     try:
         res = (
@@ -55,6 +58,7 @@ def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authent
 @router.post("/upload-csv")
 async def upload_rps_csv(
     file: UploadFile = File(...),
+    tahun_ajaran_id: Optional[str] = Form(None),
     user: dict = Depends(optional_authenticated),
 ):
     """
@@ -132,6 +136,12 @@ async def upload_rps_csv(
                 detail="Tidak ada baris valid setelah validasi. Periksa kolom pertemuan_ke."
             )
 
+        # Inject tahun_ajaran_id ke setiap baris jika disertakan
+        if tahun_ajaran_id:
+            for row in validated:
+                row["tahun_ajaran_id"] = tahun_ajaran_id
+            logger.info(f"[RPS CSV] tahun_ajaran_id={tahun_ajaran_id} akan di-set untuk semua baris")
+
         # ── Bulk upsert — 1 round-trip ke DB untuk semua baris valid ────────
         res = (
             supabase.table("rps_pertemuan")
@@ -177,11 +187,12 @@ async def upload_rps_csv(
 
 @router.get("")
 def get_rps_list(
-    kode_matkul: str = None,
+    kode_matkul: Optional[str] = None,
+    tahun_ajaran_id: Optional[str] = None,
     user: dict = Depends(optional_authenticated),
 ):
     """
-    Ambil daftar RPS. Bisa difilter berdasarkan kode_matkul.
+    Ambil daftar RPS. Bisa difilter berdasarkan kode_matkul dan/atau tahun_ajaran_id.
     """
     try:
         query = (
@@ -193,6 +204,9 @@ def get_rps_list(
 
         if kode_matkul:
             query = query.eq("kode_matkul", kode_matkul.strip())
+        if tahun_ajaran_id:
+            query = query.eq("tahun_ajaran_id", tahun_ajaran_id)
+            logger.info(f"[RPS] get_rps_list filtered by tahun_ajaran_id={tahun_ajaran_id}")
 
         res = query.execute()
         return {
