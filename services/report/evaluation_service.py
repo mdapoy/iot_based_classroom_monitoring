@@ -156,18 +156,21 @@ def _info_card_4(
     periode_label: str,
     y: float,
 ) -> float:
-    H   = 60
+    H   = 72   # was 60 — diperbesar agar jarak label–value lebih nyaman
     CW4 = CW / 4
     c.setFillColor(white)
     c.setStrokeColor(C_BDR)
     c.setLineWidth(0.5)
     c.rect(ML, y - H, CW, H, fill=1, stroke=1)
 
+    # Strip "(Pasca-UTS)" / "(Pra-UTS)" agar periode lebih ringkas di kotak
+    periode_display = periode_label.split("(")[0].strip()
+
     items = [
         ("NAMA DOSEN",       nama_dosen),
         ("PROGRAM STUDI",    prodi),
         ("SEMESTER",         semester_label),
-        ("PERIODE ANALISIS", periode_label),
+        ("PERIODE ANALISIS", periode_display),
     ]
     for i, (label, val) in enumerate(items):
         cx = ML + i * CW4 + 8
@@ -177,14 +180,14 @@ def _info_card_4(
             c.line(ML + i * CW4, y - 5, ML + i * CW4, y - H + 5)
         c.setFillColor(C_LBL)
         c.setFont("Helvetica", 7)
-        c.drawString(cx, y - 16, label)
-        # Nama bisa panjang — gunakan Paragraph agar bisa wrap
+        c.drawString(cx, y - 13, label)          # was y - 16
+        # Value: Paragraph agar bisa wrap; jarak dari label diperbesar
         p = Paragraph(
             str(val or "-"),
             _ps(fontName="Helvetica-Bold", fontSize=9, leading=13, textColor=C_PRI)
         )
         _, th = p.wrap(CW4 - 16, 9999)
-        p.drawOn(c, cx, y - 20 - th + (th - 13) / 2)
+        p.drawOn(c, cx, y - 28 - th)             # top value di y-28 (was y-20)
 
     return y - H
 
@@ -218,10 +221,10 @@ def _kpi_card(
     c.rect(ML, y - H, CW, H, fill=1, stroke=1)
 
     cols = [
-        ("TOTAL MATA KULIAH DIAMPU",    str(total_matkul),   C_TXT),
-        ("TOTAL PERTEMUAN DIANALISIS",  str(total_pertemuan), C_TXT),
-        ("STATUS KINERJA KESELURUHAN",  status_kinerja,       status_color),
-        ("PERIODE ANALISIS",            periode_label,         C_BLU),
+        ("TOTAL MATA KULIAH DIAMPU",    str(total_matkul),                    C_TXT),
+        ("TOTAL PERTEMUAN DIANALISIS",  str(total_pertemuan),                  C_TXT),
+        ("STATUS KINERJA KESELURUHAN",  status_kinerja,                        status_color),
+        ("PERIODE ANALISIS",            periode_label.split("(")[0].strip(),    C_BLU),
     ]
     for i, (lbl, val, vc) in enumerate(cols):
         cx = ML + i * CW4 + 8
@@ -252,7 +255,7 @@ def _matkul_card(
     kesesuaian_rps: str,
     y: float,
 ) -> float:
-    H   = 55
+    H   = 62   # was 55 — diperbesar agar nama matkul panjang bisa wrap
     CW4 = CW / 4
 
     kes_color = _kes_color(kesesuaian_rps)
@@ -263,10 +266,10 @@ def _matkul_card(
     c.rect(ML, y - H, CW, H, fill=1, stroke=1)
 
     cols = [
-        ("MATA KULIAH",    _trunc(nama_matkul, 22),    C_TXT),
-        ("KODE",           kode_matkul,                 C_BLU),
-        ("METODE DOMINAN", _trunc(metode_dominan, 22),  C_TXT),
-        ("KESESUAIAN RPS", kesesuaian_rps,               kes_color),
+        ("MATA KULIAH",    nama_matkul,                      C_TXT),   # tanpa _trunc, pakai Paragraph
+        ("KODE",           kode_matkul,                       C_BLU),
+        ("METODE DOMINAN", _trunc(metode_dominan, 22),        C_TXT),
+        ("KESESUAIAN RPS", kesesuaian_rps,                    kes_color),
     ]
     for i, (lbl, val, vc) in enumerate(cols):
         cx = ML + i * CW4 + 8
@@ -277,9 +280,19 @@ def _matkul_card(
         c.setFillColor(C_LBL)
         c.setFont("Helvetica", 7)
         c.drawString(cx, y - 14, lbl)
-        c.setFillColor(vc)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(cx, y - 36, val)
+
+        if i == 0:
+            # MATA KULIAH: Paragraph agar nama panjang bisa wrap ke baris bawah
+            p_val = Paragraph(
+                str(val or "-"),
+                _ps(fontName="Helvetica-Bold", fontSize=10, leading=13, textColor=vc)
+            )
+            _, th = p_val.wrap(CW4 - 16, 9999)
+            p_val.drawOn(c, cx, y - 30 - th)    # top value di y-30
+        else:
+            c.setFillColor(vc)
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(cx, y - 38, val)
 
     return y - H
 
@@ -397,7 +410,7 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
         Jika ruang tidak cukup, showPage() + reset y; return y baru.
         Jika cukup, return y_val tidak berubah.
     """
-    ROW_H = 22
+    ROW_H = 36   # was 22 — diperbesar agar aktivitas bisa tampil per baris
     HDR_H = 24
 
     # ── Header tabel ──────────────────────────────────────────────────────────
@@ -423,26 +436,38 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
 
         topik = _trunc(str(p.get("topik") or "-"), 28)
         dur   = f"{p.get('durasi_menit', 0)} mnt"
-        akt   = _trunc(str(p.get("aktivitas_str") or "-"), 22)
+        # Aktivitas: " · " diganti "<br/>" agar tiap aktivitas tampil per baris
+        akt_html = str(p.get("aktivitas_str") or "-").replace(" · ", "<br/>")
         kes_m = str(p.get("kesesuaian_materi") or "-")
         kes_t = str(p.get("kesesuaian_metode") or "-")
         stat  = str(p.get("status_waktu") or "-")
 
-        cells = [
+        # ── 5 kolom pertama: teks biasa, top-aligned ─────────────────────────
+        plain_cells = [
             (f"Ke-{p.get('pertemuan_ke', '-')}",  C_TXT,              False),
             (topik,                                 C_TXT,              False),
             (kes_m,                                 _kes_color(kes_m),  True),
             (dur,                                   C_TXT,              False),
             (stat,                                  _waktu_color(stat), True),
-            (akt,                                   C_TXT,              False),
-            (kes_t,                                 _kes_color(kes_t),  True),
         ]
         x = ML
-        for (text, color, bold), w in zip(cells, _COL_B):
+        for (text, color, bold), w in zip(plain_cells, _COL_B[:5]):
             c.setFillColor(color)
             c.setFont("Helvetica-Bold" if bold else "Helvetica", 7)
-            c.drawString(x + 4, y - ROW_H + 7, text)
+            c.drawString(x + 4, y - 13, text)    # top-aligned
             x += w
+
+        # ── Kolom aktivitas (index 5): Paragraph tiap aktivitas per baris ────
+        akt_st = _ps(fontSize=7, leading=10, textColor=C_TXT)
+        p_akt  = Paragraph(akt_html, akt_st)
+        _, ah  = p_akt.wrap(_COL_B[5] - 8, 9999)
+        p_akt.drawOn(c, x + 4, y - 9 - ah)      # top at y-9
+        x += _COL_B[5]
+
+        # ── Kolom kesesuaian metode (index 6): top-aligned ───────────────────
+        c.setFillColor(_kes_color(kes_t))
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(x + 4, y - 13, kes_t)
 
         y -= ROW_H
 
