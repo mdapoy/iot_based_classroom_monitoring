@@ -144,37 +144,46 @@ def _running_hdr(c, nama_dosen: str) -> float:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Helper: 3-column info card (header)
+# Helper: 4-column info card (header)
+# Kolom: NAMA DOSEN | PROGRAM STUDI | SEMESTER | PERIODE ANALISIS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _info_card_3(c, nama_dosen: str, prodi: str, periode_label: str, y: float) -> float:
+def _info_card_4(
+    c,
+    nama_dosen: str,
+    prodi: str,
+    semester_label: str,
+    periode_label: str,
+    y: float,
+) -> float:
     H   = 60
-    CW3 = CW / 3
+    CW4 = CW / 4
     c.setFillColor(white)
     c.setStrokeColor(C_BDR)
     c.setLineWidth(0.5)
     c.rect(ML, y - H, CW, H, fill=1, stroke=1)
 
     items = [
-        ("NAMA DOSEN",    nama_dosen),
-        ("PROGRAM STUDI", prodi),
-        ("PERIODE",       periode_label),
+        ("NAMA DOSEN",       nama_dosen),
+        ("PROGRAM STUDI",    prodi),
+        ("SEMESTER",         semester_label),
+        ("PERIODE ANALISIS", periode_label),
     ]
     for i, (label, val) in enumerate(items):
-        cx = ML + i * CW3 + 8
+        cx = ML + i * CW4 + 8
         if i > 0:
             c.setStrokeColor(C_BDR)
             c.setLineWidth(0.5)
-            c.line(ML + i * CW3, y - 5, ML + i * CW3, y - H + 5)
+            c.line(ML + i * CW4, y - 5, ML + i * CW4, y - H + 5)
         c.setFillColor(C_LBL)
         c.setFont("Helvetica", 7)
         c.drawString(cx, y - 16, label)
         # Nama bisa panjang — gunakan Paragraph agar bisa wrap
         p = Paragraph(
             str(val or "-"),
-            _ps(fontName="Helvetica-Bold", fontSize=9.5, leading=13, textColor=C_PRI)
+            _ps(fontName="Helvetica-Bold", fontSize=9, leading=13, textColor=C_PRI)
         )
-        _, th = p.wrap(CW3 - 16, 9999)
+        _, th = p.wrap(CW4 - 16, 9999)
         p.drawOn(c, cx, y - 20 - th + (th - 13) / 2)
 
     return y - H
@@ -182,6 +191,8 @@ def _info_card_3(c, nama_dosen: str, prodi: str, periode_label: str, y: float) -
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helper: KPI card (4 kolom) — Section A
+# Kolom: TOTAL MATA KULIAH DIAMPU | TOTAL PERTEMUAN DIANALISIS |
+#        STATUS KINERJA KESELURUHAN | PERIODE ANALISIS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _kpi_card(
@@ -207,10 +218,10 @@ def _kpi_card(
     c.rect(ML, y - H, CW, H, fill=1, stroke=1)
 
     cols = [
-        ("TOTAL MATA KULIAH",  str(total_matkul),    C_TXT),
-        ("TOTAL PERTEMUAN",    str(total_pertemuan),  C_TXT),
-        ("STATUS KINERJA",     status_kinerja,        status_color),
-        ("PERIODE",            periode_label,          C_BLU),
+        ("TOTAL MATA KULIAH DIAMPU",    str(total_matkul),   C_TXT),
+        ("TOTAL PERTEMUAN DIANALISIS",  str(total_pertemuan), C_TXT),
+        ("STATUS KINERJA KESELURUHAN",  status_kinerja,       status_color),
+        ("PERIODE ANALISIS",            periode_label,         C_BLU),
     ]
     for i, (lbl, val, vc) in enumerate(cols):
         cx = ML + i * CW4 + 8
@@ -230,21 +241,21 @@ def _kpi_card(
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helper: 4-column card per matkul (Section B+)
+# Kolom: MATA KULIAH | KODE | METODE DOMINAN | KESESUAIAN RPS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _matkul_card(
     c,
+    nama_matkul: str,
     kode_matkul: str,
-    total_pertemuan: int,
+    metode_dominan: str,
     kesesuaian_rps: str,
-    pct_tepat: float,
     y: float,
 ) -> float:
     H   = 55
     CW4 = CW / 4
 
     kes_color = _kes_color(kesesuaian_rps)
-    pct_color = C_GRN if pct_tepat >= 80 else (C_GOLD if pct_tepat >= 60 else C_PRI)
 
     c.setFillColor(C_BG)
     c.setStrokeColor(C_BDR)
@@ -252,10 +263,10 @@ def _matkul_card(
     c.rect(ML, y - H, CW, H, fill=1, stroke=1)
 
     cols = [
-        ("KODE MATA KULIAH",   kode_matkul,               C_BLU),
-        ("TOTAL PERTEMUAN",    f"{total_pertemuan} Ptm",   C_TXT),
-        ("KESESUAIAN RPS",     kesesuaian_rps,             kes_color),
-        ("TEPAT WAKTU",        f"{pct_tepat:.1f}%",        pct_color),
+        ("MATA KULIAH",    _trunc(nama_matkul, 22),    C_TXT),
+        ("KODE",           kode_matkul,                 C_BLU),
+        ("METODE DOMINAN", _trunc(metode_dominan, 22),  C_TXT),
+        ("KESESUAIAN RPS", kesesuaian_rps,               kes_color),
     ]
     for i, (lbl, val, vc) in enumerate(cols):
         cx = ML + i * CW4 + 8
@@ -317,10 +328,11 @@ def _waktu_color(val: str):
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helper: tabel ringkasan matkul (Section A)
+# Kolom: KODE | MATA KULIAH | PERTEMUAN | TEPAT WAKTU | KESESUAIAN RPS
 # ══════════════════════════════════════════════════════════════════════════════
 
-_COL_A = [25, 155, 45, 80, 65, 125]   # total = 495
-_HDR_A = ["No.", "Mata Kuliah", "Ptm", "Kesesuaian RPS", "Tepat Waktu", "Metode Dominan"]
+_COL_A = [80, 155, 65, 80, 115]   # total = 495
+_HDR_A = ["Kode", "Mata Kuliah", "Pertemuan", "Tepat Waktu", "Kesesuaian RPS"]
 
 def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
     ROW_H = 22
@@ -349,12 +361,11 @@ def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
         pct_color = C_GRN if pct_tepat >= 80 else (C_GOLD if pct_tepat >= 60 else C_PRI)
 
         cells = [
-            (str(i + 1),                             C_TXT,                                  False),
-            (_trunc(m.get("nama_matkul", "-"), 30),  C_TXT,                                  False),
-            (str(m.get("total_pertemuan", 0)),        C_TXT,                                  False),
-            (m.get("kesesuaian_rps", "-"),             _kes_color(m.get("kesesuaian_rps", "")), True),
-            (f"{pct_tepat:.1f}%",                     pct_color,                              True),
-            (_trunc(m.get("metode_dominan", "-"), 22), C_TXT,                                 False),
+            (m.get("kode_matkul", "-"),               C_BLU,                                   False),
+            (_trunc(m.get("nama_matkul", "-"), 30),    C_TXT,                                   False),
+            (str(m.get("total_pertemuan", 0)),          C_TXT,                                   False),
+            (f"{pct_tepat:.1f}%",                       pct_color,                               True),
+            (m.get("kesesuaian_rps", "-"),               _kes_color(m.get("kesesuaian_rps", "")), True),
         ]
         x = ML
         for (text, color, bold), w in zip(cells, _COL_A):
@@ -370,6 +381,8 @@ def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helper: tabel per pertemuan (Section B+)
+# Kolom: KE- | TOPIK | KESESUAIAN MATERI | DURASI | STATUS WAKTU |
+#        AKTIVITAS PEMBELAJARAN | KESESUAIAN AKTIVITAS
 # ══════════════════════════════════════════════════════════════════════════════
 
 _COL_B = [28, 130, 68, 42, 78, 92, 57]   # total = 495
@@ -520,9 +533,10 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
     c.drawString(ML, y, "LAPORAN EVALUASI DOSEN")
     y -= 20
 
+    # Subtitle: "Rekap Kinerja Mengajar · {prodi} · {semester_label}"
     c.setFillColor(HexColor("#666666"))
     c.setFont("Helvetica", 8.5)
-    c.drawString(ML, y, f"Analisis Kinerja Mengajar Dosen  |  {semester_label}")
+    c.drawString(ML, y, f"Rekap Kinerja Mengajar  ·  {prodi}  ·  {semester_label}")
     y -= 10
 
     # Separator
@@ -531,15 +545,15 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
     c.line(ML, y, MR, y)
     y -= 12
 
-    # ── Info Card (3 kolom) ───────────────────────────────────────────────────
-    y = _info_card_3(c, nama_dosen, prodi, periode_label, y)
+    # ── Info Card (4 kolom): NAMA DOSEN | PROGRAM STUDI | SEMESTER | PERIODE ANALISIS
+    y = _info_card_4(c, nama_dosen, prodi, semester_label, periode_label, y)
     y -= 14
 
     # ── Section A: Ringkasan Kinerja ──────────────────────────────────────────
-    y = _sec_hdr(c, "A", "RINGKASAN KINERJA", y)
+    y = _sec_hdr(c, "A", "RINGKASAN KINERJA MENGAJAR", y)
     y -= 12
 
-    # KPI card
+    # KPI card (4 kolom)
     y = _kpi_card(
         c,
         total_matkul    = ringkasan["total_matkul"],
@@ -576,16 +590,16 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
         nama_matkul = matkul.get("nama_matkul", "-")
 
         # Section header
-        y = _sec_hdr(c, badge, f"RINCIAN MATA KULIAH — {nama_matkul.upper()}", y)
+        y = _sec_hdr(c, badge, f"DETAIL MATA KULIAH: {nama_matkul.upper()}", y)
         y -= 10
 
-        # 4-col card
+        # 4-col card: MATA KULIAH | KODE | METODE DOMINAN | KESESUAIAN RPS
         y = _matkul_card(
             c,
+            nama_matkul    = matkul.get("nama_matkul", "-"),
             kode_matkul    = matkul.get("kode_matkul", "-"),
-            total_pertemuan= matkul.get("total_pertemuan", 0),
+            metode_dominan = matkul.get("metode_dominan", "-"),
             kesesuaian_rps = matkul.get("kesesuaian_rps", "-"),
-            pct_tepat      = matkul.get("pct_tepat_waktu", 0.0),
             y              = y,
         )
         y -= 14
@@ -593,7 +607,7 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
         # Sub-header tabel
         c.setFillColor(C_TXT)
         c.setFont("Helvetica-Bold", 9.5)
-        c.drawString(ML, y, "Detail Pelaksanaan Perkuliahan")
+        c.drawString(ML, y, f"{badge}.1  Ringkasan Per Pertemuan")
         y -= 8
 
         # check_fn: (y_val, needed) → float
@@ -616,7 +630,14 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
             f"<b>Kesimpulan:</b> {kesimpulan}", CW - 24, 8.5, 13
         ) + 20
         y = _check(y, kes_height)
-        y = _note_box(c, "Kesimpulan:", kesimpulan, y)
+
+        # Sub-header kesimpulan
+        c.setFillColor(C_TXT)
+        c.setFont("Helvetica-Bold", 9.5)
+        c.drawString(ML, y, f"{badge}.2  Kesimpulan Mata Kuliah")
+        y -= 8
+
+        y = _note_box(c, "", kesimpulan, y)
 
         _footer(c, pg[0], total_pages)
         c.showPage()
@@ -661,7 +682,7 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
         y = _para(c, para2, st_body, ML, y, CW)
         y -= 20
 
-    # Garis tanda tangan (opsional)
+    # Garis tanda tangan
     y -= 20
     sig_w = 160
     c.setStrokeColor(C_BDR)
