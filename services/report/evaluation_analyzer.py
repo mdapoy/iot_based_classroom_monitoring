@@ -11,6 +11,7 @@ from repositories.supabase_client import supabase
 from services.summarizer.summarizer import client, MODELS, classify_gemini_error
 from services.rps.rps_service import SEMESTER_START_DATE, get_meeting_week
 from core.logger import logger
+from core.matkul_filter import is_matkul_blacklisted
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -253,8 +254,9 @@ def get_matkul_for_dosen(kode_dosen: str) -> list[dict]:
         for j in jadwal:
             if j.get("dosen_utama") == kode_dosen:
                 kode = j.get("kode_mata_kuliah")
-                if kode and kode not in seen:
-                    seen[kode] = j.get("mata_kuliah", kode)
+                nama = j.get("mata_kuliah", kode or "")
+                if kode and kode not in seen and not is_matkul_blacklisted(nama):
+                    seen[kode] = nama
         return [{"kode_matkul": k, "nama_matkul": v} for k, v in seen.items()]
     except Exception as e:
         logger.warning(f"[EVAL] get_matkul_for_dosen gagal kode={kode_dosen}: {e}")

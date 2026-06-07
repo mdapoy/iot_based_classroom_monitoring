@@ -5,6 +5,7 @@ from repositories.supabase_client import supabase
 from repositories.cache import get_all_jadwal
 from api.v1.deps import require_admin, require_authenticated, optional_authenticated
 from core.logger import logger
+from core.matkul_filter import is_matkul_blacklisted
 from typing import Optional
 import time
 import os
@@ -66,7 +67,10 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
     jadwal_index = {
         (j["kode_mata_kuliah"], j["dosen_utama"], j["kelas"]): j
         for j in jadwal_list
-        if j.get("kode_mata_kuliah") and j.get("dosen_utama") and j.get("kelas")
+        if (
+            j.get("kode_mata_kuliah") and j.get("dosen_utama") and j.get("kelas")
+            and not is_matkul_blacklisted(j.get("mata_kuliah", ""))
+        )
     }
 
     # =========================
@@ -187,13 +191,18 @@ def get_monitoring(
     for item in monitoring.data:
 
         j = item.get("jadwal_kuliah") or {}
+        nama_matkul = j.get("mata_kuliah", "")
+
+        # Sembunyikan matkul yang diblacklist (praktikum, studium general)
+        if is_matkul_blacklisted(nama_matkul):
+            continue
 
         data.append({
             "id": item["id"],
             "tanggal": item["tanggal"],
             "jam": f"{j.get('jam_mulai', '')} - {j.get('jam_selesai', '')}",
             "ruangan": j.get("ruangan", ""),
-            "matkul": j.get("mata_kuliah", ""),
+            "matkul": nama_matkul,
             "kode": j.get("kode_mata_kuliah", ""),
             "kodeDosen": j.get("dosen_utama", ""),
             "kehadiran": item["kehadiran"],
