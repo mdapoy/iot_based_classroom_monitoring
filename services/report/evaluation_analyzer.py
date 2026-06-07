@@ -281,6 +281,96 @@ def get_all_dosen_teknik_komputer() -> list[dict]:
         return []
 
 
+def get_matkul_info(kode_dosen: str) -> list[dict]:
+    """
+    Ambil ringkasan matkul yang diampu dosen + pertemuan yang sudah tersedia
+    (laporan done) semester ini, dikelompokkan per periode.
+
+    Return list of:
+      {
+        kode_matkul, nama_matkul,
+        total_tersedia,
+        pertemuan,      # semua ptm yg ada
+        pra_uts,        # ptm di range 1-7
+        pasca_uts,      # ptm di range 9-15
+      }
+    """
+    matkul_list = get_matkul_for_dosen(kode_dosen)
+    if not matkul_list:
+        return []
+
+    kode_list = [m["kode_matkul"] for m in matkul_list]
+
+    # Semua laporan done semester ini untuk dosen ini
+    try:
+        reports_res = (
+            supabase.table("reports")
+            .select("id, kode_matkul, tanggal")
+            .eq("kode_dosen", kode_dosen)
+            .eq("status", "done")
+            .gte("tanggal", SEMESTER_START_DATE)
+            .in_("kode_matkul", kode_list)
+            .execute()
+        )
+        all_reports = reports_res.data or []
+    except Exception as e:
+        logger.warning(f"[EVAL] get_matkul_info reports query gagal: {e}")
+        all_reports = []
+
+    report_ids = [r["id"] for r in all_reports]
+
+    # Ambil pertemuan_ke dari activity_stats
+    ptm_by_report: dict[int, int] = {}
+    if report_ids:
+        try:
+            act_res = (
+                supabase.table("activity_stats")
+                .select("report_id, pertemuan_ke")
+                .in_("report_id", report_ids)
+                .execute()
+            )
+            for row in (act_res.data or []):
+                ptm_by_report[row["report_id"]] = row["pertemuan_ke"]
+        except Exception as e:
+            logger.warning(f"[EVAL] get_matkul_info activity_stats query gagal: {e}")
+
+    # Fallback: hitung pertemuan_ke dari tanggal
+    for r in all_reports:
+        rid = r["id"]
+        if rid not in ptm_by_report and r.get("tanggal"):
+            try:
+                ptm_by_report[rid] = get_meeting_week(str(r["tanggal"]))
+            except Exception:
+                pass
+
+    # Kelompokkan pertemuan per matkul
+    ptm_by_matkul: dict[str, set[int]] = {}
+    for r in all_reports:
+        kode = r.get("kode_matkul")
+        ptm  = ptm_by_report.get(r["id"])
+        if kode and ptm:
+            ptm_by_matkul.setdefault(kode, set()).add(ptm)
+
+    pra_set   = set(PERIOD_RANGES["1-7"])
+    pasca_set = set(PERIOD_RANGES["9-15"])
+
+    result = []
+    for m in matkul_list:
+        kode = m["kode_matkul"]
+        ptms = sorted(ptm_by_matkul.get(kode, set()))
+
+        result.append({
+            "kode_matkul":    kode,
+            "nama_matkul":    m["nama_matkul"],
+            "total_tersedia": len(ptms),
+            "pertemuan":      ptms,
+            "pra_uts":        sorted(p for p in ptms if p in pra_set),
+            "pasca_uts":      sorted(p for p in ptms if p in pasca_set),
+        })
+
+    return result
+
+
 def check_prerequisites(kode_dosen: str, periode: str) -> dict:
     """
     Cek apakah semua pertemuan dalam periode sudah punya laporan done

@@ -11,6 +11,7 @@ from services.report.evaluation_analyzer import (
     build_eval_data,
     get_all_dosen_teknik_komputer,
     get_matkul_for_dosen,
+    get_matkul_info,
     PERIOD_RANGES,
     PERIOD_LABELS,
 )
@@ -132,6 +133,22 @@ def get_dosen_list():
         "status": "success",
         "data":   dosen_list,
         "total":  len(dosen_list),
+    }
+
+
+@router.get("/matkul-info")
+def get_matkul_info_endpoint(
+    kode_dosen: str = Query(..., description="Kode dosen, contoh: MFC"),
+):
+    """
+    Daftar mata kuliah yang diampu dosen + ringkasan pertemuan tersedia semester ini.
+    Digunakan FE untuk menampilkan overview sebelum user memilih periode & generate.
+    """
+    data = get_matkul_info(kode_dosen)
+    return {
+        "status": "success",
+        "data":   data,
+        "total":  len(data),
     }
 
 
