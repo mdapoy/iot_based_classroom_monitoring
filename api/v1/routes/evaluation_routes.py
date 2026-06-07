@@ -168,9 +168,11 @@ def prerequisite_check(
         return {"status": "error", "message": result["error"]}
 
     return {
-        "status":    "success",
+        "status":       "success",
         "can_generate": result["ok"],
-        "missing":   result.get("missing", {}),
+        "can_partial":  result.get("can_partial", False),
+        "missing":      result.get("missing", {}),
+        "available":    result.get("available", {}),
         "message": (
             "Semua pertemuan sudah siap. Laporan evaluasi dapat dibuat."
             if result["ok"]
@@ -205,20 +207,28 @@ async def generate_evaluation(request: Request, req: GenerateRequest):
     if prereq.get("error"):
         raise HTTPException(status_code=422, detail=prereq["error"])
 
-    if not prereq["ok"]:
+    # Block hanya kalau tidak ada pertemuan sama sekali yang tersedia
+    if not prereq.get("can_partial", False):
         missing_info = {
-            kode: f"Pertemuan {missing}"
-            for kode, missing in prereq["missing"].items()
+            kode: f"Pertemuan {ptms}"
+            for kode, ptms in prereq.get("missing", {}).items()
         }
         raise HTTPException(
             status_code=422,
             detail={
                 "message": (
-                    "Tidak semua pertemuan memiliki laporan identifikasi yang selesai. "
-                    "Harap generate ulang laporan yang kurang terlebih dahulu."
+                    "Belum ada pertemuan yang memiliki laporan identifikasi selesai "
+                    "untuk periode ini. Harap generate laporan identifikasi terlebih dahulu."
                 ),
                 "missing": missing_info,
             },
+        )
+
+    # Jika sebagian tersedia (parsial) — lanjut generate dengan data yang ada
+    if not prereq["ok"]:
+        logger.warning(
+            f"[EVAL ROUTE] Partial generate: dosen={req.kode_dosen} periode={req.periode} "
+            f"available={prereq.get('available')} missing={prereq.get('missing')}"
         )
 
     # ── 3. Cegah duplikat ─────────────────────────────────────────────────────

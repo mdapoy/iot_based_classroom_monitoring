@@ -351,16 +351,26 @@ def check_prerequisites(kode_dosen: str, periode: str) -> dict:
         if kode and ptm and ptm in expected_set:
             done_ptm.setdefault(kode, set()).add(ptm)
 
-    # Cek yang kurang per matkul
-    missing: dict[str, list[int]] = {}
+    # Cek yang kurang + yang tersedia per matkul
+    missing:   dict[str, list[int]] = {}
+    available: dict[str, list[int]] = {}
     for m in matkul_list:
         kode = m["kode_matkul"]
         have = done_ptm.get(kode, set())
-        lack = sorted(expected_set - have)
+        lack  = sorted(expected_set - have)
+        avail = sorted(have)
         if lack:
             missing[kode] = lack
+        if avail:
+            available[kode] = avail
 
-    return {"ok": len(missing) == 0, "missing": missing}
+    total_available = sum(len(v) for v in available.values())
+    return {
+        "ok":          len(missing) == 0,
+        "missing":     missing,
+        "available":   available,
+        "can_partial": total_available > 0,
+    }
 
 
 async def build_eval_data(
