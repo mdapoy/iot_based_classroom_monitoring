@@ -123,9 +123,24 @@ Berikut transkrip:
                 ringkasan = {"pembuka": "", "poin": []}
                 detail    = ""
                 try:
-                    json_match = re.search(r'\{.*\}', text, re.DOTALL)
-                    if json_match:
-                        parsed   = json.loads(json_match.group())
+                    # Cari posisi '{' pertama — titik awal JSON
+                    start = text.find('{')
+                    parsed = None
+                    if start != -1:
+                        try:
+                            # raw_decode berhenti tepat setelah JSON pertama
+                            # yang valid, mengabaikan karakter extra (} ``` dll)
+                            # di belakangnya — robust terhadap Gemini yang
+                            # kadang menambah extra brace atau markdown wrapper
+                            parsed, _ = json.JSONDecoder().raw_decode(text, start)
+                        except json.JSONDecodeError:
+                            # Fallback: coba strip markdown dulu lalu parse ulang
+                            clean = re.sub(r'```[a-z]*', '', text).strip()
+                            start2 = clean.find('{')
+                            if start2 != -1:
+                                parsed, _ = json.JSONDecoder().raw_decode(clean, start2)
+
+                    if parsed:
                         raw_ring = parsed.get("ringkasan", {})
 
                         if isinstance(raw_ring, dict):

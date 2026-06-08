@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from repositories.supabase_client import supabase
-from models.rps_schema import RPSRequest
+from models.rps_schema import RPSRequest, RPSConfirmRequest
 from api.v1.deps import optional_authenticated
 from utils.file_validator import validate_csv
 from core.logger import logger
@@ -182,6 +182,128 @@ async def upload_rps_csv(
         raise
     except Exception as e:
         logger.error(f"[RPS CSV] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/extract-pdf")
+async def extract_rps_pdf(
+    file: UploadFile = File(...),
+    user: dict = Depends(optional_authenticated),
+):
+    """
+    Upload file PDF RPS (format Telkom University) dan ekstrak datanya.
+    Tidak menyimpan apa pun ke database — hanya mengembalikan preview.
+
+    Response berisi:
+      - kode_matkul   : deteksi otomatis dari halaman info
+      - nama_matkul   : deteksi otomatis
+      - tahun_ajaran_id: UUID tahun ajaran aktif (is_aktif=true)
+      - rows          : list pertemuan (pertemuan_ke, materi, pengalaman)
+      - warnings      : daftar peringatan kualitas data (jika ada)
+
+    Langkah selanjutnya: kirim hasil ini ke POST /rps/confirm-insert
+    setelah user memverifikasi.
+    """
+    # Validasi tipe file
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="File harus berformat PDF")
+
+    try:
+        from services.rps.pdf_extractor import extract_rps_from_pdf
+
+        file_bytes = await file.read()
+
+        if len(file_bytes) == 0:
+            raise HTTPException(status_code=400, detail="File PDF kosong")
+
+        result = extract_rps_from_pdf(file_bytes)
+
+        if not result["rows"]:
+            raise HTTPException(
+                status_code=422,
+                detail="Tidak ada data pertemuan yang berhasil diekstrak. "
+                       "Pastikan file adalah RPS format Telkom University."
+            )
+
+        logger.info(
+            f"[RPS PDF] Extracted | file={file.filename} "
+            f"kode_matkul={result['kode_matkul']} rows={len(result['rows'])}"
+        )
+
+        return {
+            "status":   "success",
+            "message":  f"{len(result['rows'])} pertemuan berhasil diekstrak. "
+                        f"Periksa data lalu kirim ke /rps/confirm-insert untuk menyimpan.",
+            "preview":  result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[RPS PDF] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/confirm-insert")
+def confirm_insert_rps(
+    data: RPSConfirmRequest,
+    user: dict = Depends(optional_authenticated),
+):
+    """
+    Simpan hasil ekstraksi PDF ke tabel rps_pertemuan (bulk upsert).
+    Dipanggil setelah user memverifikasi preview dari /rps/extract-pdf.
+
+    - Jika tahun_ajaran_id tidak dikirim, backend auto-ambil dari is_aktif=true.
+    - Menggunakan upsert on_conflict(kode_matkul, pertemuan_ke) → aman dijalankan ulang.
+    """
+    if not data.rows:
+        raise HTTPException(status_code=400, detail="Tidak ada baris data yang dikirim")
+
+    try:
+        # Resolve tahun_ajaran_id
+        tahun_ajaran_id = data.tahun_ajaran_id
+        if not tahun_ajaran_id:
+            from services.rps.pdf_extractor import get_active_tahun_ajaran_id
+            tahun_ajaran_id = get_active_tahun_ajaran_id()
+
+        # Susun payload DB
+        payload = []
+        for row in data.rows:
+            item = {
+                "kode_matkul":                      data.kode_matkul.strip(),
+                "pertemuan_ke":                     row.pertemuan_ke,
+                "materi_pembelajaran":              row.materi_pembelajaran.strip(),
+                "pengalaman_pembelajaran_mahasiswa": row.pengalaman_pembelajaran_mahasiswa.strip(),
+            }
+            if tahun_ajaran_id:
+                item["tahun_ajaran_id"] = tahun_ajaran_id
+            payload.append(item)
+
+        res = (
+            supabase.table("rps_pertemuan")
+            .upsert(payload, on_conflict="kode_matkul,pertemuan_ke")
+            .execute()
+        )
+
+        count = len(res.data or [])
+
+        logger.info(
+            f"[RPS PDF] Inserted | kode_matkul={data.kode_matkul} "
+            f"rows={count} tahun_ajaran_id={tahun_ajaran_id}"
+        )
+
+        return {
+            "status":        "success",
+            "message":       f"{count} baris RPS berhasil disimpan untuk {data.kode_matkul}.",
+            "rows_upserted": count,
+            "kode_matkul":   data.kode_matkul,
+            "tahun_ajaran_id": tahun_ajaran_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[RPS PDF] Confirm insert error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
