@@ -205,6 +205,23 @@ def get_file_from_gdrive_flexible(primary_key: str, secondary_key: str = None):
                 if not files:
                     return None, None, None
 
+                # ── Filter ketat: pastikan primary_key benar-benar ada
+                # sebagai substring di nama file (GDrive API pakai token-based
+                # search, bukan substring, sehingga file dari tanggal lain bisa
+                # ikut ter-return jika berbagi token yang sama).
+                strict_files = [
+                    f for f in files if primary_key in f["name"]
+                ]
+                if strict_files:
+                    files = strict_files
+                else:
+                    # Fallback: tidak ada yang cocok secara ketat → log warning
+                    logger.warning(
+                        f"[GDRIVE WARNING] Tidak ada file yang cocok exact "
+                        f"dengan primary_key='{primary_key}', "
+                        f"pakai semua hasil API"
+                    )
+
                 # handle multiple files
                 if len(files) > 1:
 
@@ -213,13 +230,22 @@ def get_file_from_gdrive_flexible(primary_key: str, secondary_key: str = None):
                         f"filenames={[f['name'] for f in files]}"
                     )
 
-                    # Prioritas: .wav > .mp3 > file pertama
-                    audio_exts = (".wav", ".mp3", ".m4a", ".ogg", ".flac")
+                    # Prioritas: .wav > .mp3 > .m4a > lainnya
+                    ext_priority = {".wav": 0, ".mp3": 1, ".m4a": 2,
+                                    ".ogg": 3, ".flac": 4}
+                    audio_exts = tuple(ext_priority.keys())
                     audio_files = [
                         f for f in files
                         if f["name"].lower().endswith(audio_exts)
                     ]
-                    file = audio_files[0] if audio_files else files[0]
+                    candidates = audio_files if audio_files else files
+                    # Sort berdasarkan prioritas ekstensi
+                    candidates.sort(
+                        key=lambda f: ext_priority.get(
+                            "." + f["name"].lower().rsplit(".", 1)[-1], 99
+                        )
+                    )
+                    file = candidates[0]
 
                 else:
                     file = files[0]

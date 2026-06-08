@@ -398,7 +398,7 @@ def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
 #        AKTIVITAS PEMBELAJARAN | KESESUAIAN AKTIVITAS
 # ══════════════════════════════════════════════════════════════════════════════
 
-_COL_B = [28, 130, 68, 42, 78, 92, 57]   # total = 495
+_COL_B = [28, 112, 68, 42, 78, 110, 57]   # total = 495 | Aktivitas 92→110, Topik 130→112
 _HDR_B = ["Ke-", "Topik RPS", "Kes. Materi", "Durasi", "Status Waktu", "Aktivitas", "Kes. Metode"]
 
 def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float:
@@ -410,7 +410,7 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
         Jika ruang tidak cukup, showPage() + reset y; return y baru.
         Jika cukup, return y_val tidak berubah.
     """
-    ROW_H = 36   # was 22 — diperbesar agar aktivitas bisa tampil per baris
+    ROW_H = 44   # was 36 — ruang untuk 4 baris aktivitas + centering
     HDR_H = 24
 
     # ── Header tabel ──────────────────────────────────────────────────────────
@@ -426,6 +426,8 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
     y -= HDR_H
 
     # ── Baris data ────────────────────────────────────────────────────────────
+    mid = ROW_H / 2   # titik tengah baris, dipakai untuk centering
+
     for i, p in enumerate(pertemuan_list):
         y = check_fn(y, ROW_H)
 
@@ -436,13 +438,13 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
 
         topik = _trunc(str(p.get("topik") or "-"), 28)
         dur   = f"{p.get('durasi_menit', 0)} mnt"
-        # Aktivitas: " · " diganti "<br/>" agar tiap aktivitas tampil per baris
+        # Aktivitas: " · " → "<br/>" agar tiap aktivitas tampil per baris
         akt_html = str(p.get("aktivitas_str") or "-").replace(" · ", "<br/>")
         kes_m = str(p.get("kesesuaian_materi") or "-")
         kes_t = str(p.get("kesesuaian_metode") or "-")
         stat  = str(p.get("status_waktu") or "-")
 
-        # ── 5 kolom pertama: teks biasa, top-aligned ─────────────────────────
+        # ── 5 kolom pertama: teks biasa, vertically centered ─────────────────
         plain_cells = [
             (f"Ke-{p.get('pertemuan_ke', '-')}",  C_TXT,              False),
             (topik,                                 C_TXT,              False),
@@ -454,20 +456,23 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
         for (text, color, bold), w in zip(plain_cells, _COL_B[:5]):
             c.setFillColor(color)
             c.setFont("Helvetica-Bold" if bold else "Helvetica", 7)
-            c.drawString(x + 4, y - 13, text)    # top-aligned
+            c.drawString(x + 4, y - mid - 2, text)   # vertically centered
             x += w
 
-        # ── Kolom aktivitas (index 5): Paragraph tiap aktivitas per baris ────
+        # ── Kolom aktivitas (index 5): Paragraph, vertically centered ────────
         akt_st = _ps(fontSize=7, leading=10, textColor=C_TXT)
         p_akt  = Paragraph(akt_html, akt_st)
         _, ah  = p_akt.wrap(_COL_B[5] - 8, 9999)
-        p_akt.drawOn(c, x + 4, y - 9 - ah)      # top at y-9
+        p_akt.drawOn(c, x + 4, y - mid - ah / 2)     # centered
         x += _COL_B[5]
 
-        # ── Kolom kesesuaian metode (index 6): top-aligned ───────────────────
-        c.setFillColor(_kes_color(kes_t))
-        c.setFont("Helvetica-Bold", 7)
-        c.drawString(x + 4, y - 13, kes_t)
+        # ── Kolom kesesuaian metode (index 6): Paragraph, vertically centered ─
+        kes_t_html = kes_t   # "Sebagian Sesuai" / "Tidak Sesuai" → wrap otomatis
+        kt_st  = _ps(fontSize=7, leading=10, fontName="Helvetica-Bold",
+                     textColor=_kes_color(kes_t))
+        p_kt   = Paragraph(kes_t_html, kt_st)
+        _, kh  = p_kt.wrap(_COL_B[6] - 8, 9999)
+        p_kt.drawOn(c, x + 4, y - mid - kh / 2)      # centered
 
         y -= ROW_H
 
