@@ -185,6 +185,93 @@ async def upload_rps_csv(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/upload-pdf")
+async def upload_rps_pdf_direct(
+    file: UploadFile = File(...),
+    tahun_ajaran_id: Optional[str] = Form(None),
+    user: dict = Depends(optional_authenticated),
+):
+    """
+    Upload PDF RPS → ekstrak → langsung simpan ke DB dalam satu langkah.
+    Endpoint ini dipanggil oleh frontend Input RPS (tanpa preview step).
+
+    - tahun_ajaran_id opsional: jika tidak dikirim, backend auto-ambil is_aktif=true.
+    - Response format sama dengan /upload-csv agar kompatibel dengan frontend.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="File harus berformat PDF")
+
+    try:
+        from services.rps.pdf_extractor import extract_rps_from_pdf, get_active_tahun_ajaran_id
+
+        file_bytes = await file.read()
+        if len(file_bytes) == 0:
+            raise HTTPException(status_code=400, detail="File PDF kosong")
+
+        # Ekstrak data dari PDF
+        result = extract_rps_from_pdf(file_bytes)
+
+        if not result["rows"]:
+            raise HTTPException(
+                status_code=422,
+                detail="Tidak ada data pertemuan yang berhasil diekstrak. "
+                       "Pastikan file adalah RPS format Telkom University."
+            )
+
+        # Resolve tahun_ajaran_id: dari form → dari DB aktif
+        ta_id = tahun_ajaran_id or result.get("tahun_ajaran_id") or get_active_tahun_ajaran_id()
+
+        kode_matkul = result.get("kode_matkul", "").strip()
+        if not kode_matkul:
+            raise HTTPException(
+                status_code=422,
+                detail="kode_matkul tidak ditemukan di PDF. Gunakan endpoint /rps/extract-pdf untuk input manual."
+            )
+
+        # Susun payload DB
+        payload = []
+        for row in result["rows"]:
+            item = {
+                "kode_matkul":                      kode_matkul,
+                "pertemuan_ke":                     row["pertemuan_ke"],
+                "materi_pembelajaran":              row["materi_pembelajaran"].strip(),
+                "pengalaman_pembelajaran_mahasiswa": row["pengalaman_pembelajaran_mahasiswa"].strip(),
+            }
+            if ta_id:
+                item["tahun_ajaran_id"] = ta_id
+            payload.append(item)
+
+        # Bulk upsert
+        res = (
+            supabase.table("rps_pertemuan")
+            .upsert(payload, on_conflict="kode_matkul,pertemuan_ke")
+            .execute()
+        )
+        count = len(res.data or [])
+
+        logger.info(
+            f"[RPS PDF UPLOAD] kode_matkul={kode_matkul} rows={count} "
+            f"warnings={len(result['warnings'])} tahun_ajaran_id={ta_id}"
+        )
+
+        return {
+            "status":        "success",
+            "message":       f"{count} baris RPS berhasil disimpan untuk {kode_matkul}.",
+            "rows_upserted": count,
+            "kode_matkul":   kode_matkul,
+            "nama_matkul":   result.get("nama_matkul"),
+            "tahun_ajaran_id": ta_id,
+            "skipped":       0,
+            "errors":        result["warnings"],  # warnings ditampilkan sebagai info
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[RPS PDF UPLOAD] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/extract-pdf")
 async def extract_rps_pdf(
     file: UploadFile = File(...),
