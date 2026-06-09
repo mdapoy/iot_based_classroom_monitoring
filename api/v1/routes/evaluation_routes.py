@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -21,6 +22,56 @@ from core.limiter import limiter
 from core.logger import logger
 
 router = APIRouter(prefix="/evaluation", tags=["Evaluasi Dosen"])
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Konstanta & helper untuk tabel ringkasan kelas + performa dosen
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Pertemuan yang tidak dihitung sebagai sesi mengajar (UTS ke-7, UAS ke-16)
+EXCLUDED_PERTEMUAN = {7, 16}
+
+# Bobot komponen % Performa Dosen (total 1.0)
+PERFORMA_WEIGHTS = {
+    "materi":    0.5,
+    "waktu":     0.3,
+    "kehadiran": 0.2,
+}
+
+
+def _materi_weight(nilai: Optional[str]):
+    """Konversi kategori kesesuaian_materi → skor 0..100. None kalau tak ada nilai."""
+    if not nilai:
+        return None
+    v = nilai.upper().strip()
+    if "TIDAK SESUAI" in v:
+        return 0.0
+    if "SEBAGIAN" in v:
+        return 50.0
+    if "SESUAI" in v:
+        return 100.0
+    return None
+
+
+def _parse_rps_minutes_eval(pengalaman: Optional[str]):
+    """Durasi harapan per pertemuan (menit) dari pengalaman_pembelajaran_mahasiswa."""
+    if not pengalaman:
+        return None
+    m = re.search(r"(\d+)\s*[xX]\s*(\d+)", pengalaman)
+    if m:
+        return int(m.group(1)) * int(m.group(2))
+    m2 = re.search(r"(\d+)\s*menit", pengalaman, re.IGNORECASE)
+    if m2:
+        return int(m2.group(1))
+    return None
+
+
+def _actual_minutes_from_stats(row: dict):
+    """Durasi aktual mengajar (menit) dari baris activity_stats."""
+    total_sec = sum(
+        (row.get(k) or 0)
+        for k in ("ceramah_sec", "tanya_jawab_sec", "diskusi_sec", "diam_sec")
+    )
+    return total_sec / 60.0
 
 # Simpan referensi task agar tidak di-cancel oleh GC diam-diam
 _background_tasks: set = set()
@@ -379,3 +430,319 @@ def list_evaluations(
         "data":   rows,
         "total":  len(rows),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TABEL KELAS — ringkasan ketepatan materi & ketepatan waktu mengajar
+# Dikelompokkan per (kode_matkul, kelas, kode_dosen)
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/kelas-summary")
+def get_kelas_summary(
+    tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+):
+    # ── laporan yang sudah selesai ───────────────────────────────────────────
+    reports = (
+        supabase.table("reports")
+        .select("id, kode_matkul, kelas, kode_dosen, kesesuaian_materi")
+        .eq("status", "done")
+        .execute()
+        .data or []
+    )
+
+    # ── activity_stats: pertemuan_ke + durasi aktual, di-index per report_id ─
+    report_ids = [r["id"] for r in reports]
+    stats_by_report: dict = {}
+    if report_ids:
+        for s in (
+            supabase.table("activity_stats")
+            .select("report_id, pertemuan_ke, ceramah_sec, tanya_jawab_sec, diskusi_sec, diam_sec")
+            .in_("report_id", report_ids)
+            .execute()
+            .data or []
+        ):
+            rid = s.get("report_id")
+            if rid is not None and rid not in stats_by_report:
+                stats_by_report[rid] = s
+
+    # ── durasi harapan RPS per kode_matkul ──────────────────────────────────
+    rps_minutes: dict = {}
+    for r in (
+        supabase.table("rps_pertemuan")
+        .select("kode_matkul, pengalaman_pembelajaran_mahasiswa")
+        .execute()
+        .data or []
+    ):
+        kode = r.get("kode_matkul")
+        if kode and kode not in rps_minutes:
+            mnt = _parse_rps_minutes_eval(r.get("pengalaman_pembelajaran_mahasiswa"))
+            if mnt:
+                rps_minutes[kode] = mnt
+
+    # ── nama dosen ───────────────────────────────────────────────────────────
+    nama_dosen_map = {
+        d["kode_dosen"]: (d.get("nama_lengkap") or "").strip()
+        for d in (
+            supabase.table("dosen")
+            .select("kode_dosen, nama_lengkap")
+            .execute()
+            .data or []
+        )
+        if d.get("kode_dosen")
+    }
+
+    # ── nama matkul + filter Tahun Ajaran dari jadwal_kuliah ────────────────
+    jadwal = (
+        supabase.table("jadwal_kuliah")
+        .select("kode_mata_kuliah, mata_kuliah, tahun_ajaran_id")
+        .execute()
+        .data or []
+    )
+    nama_matkul_map: dict = {}
+    allowed_kode: set = set()
+    for j in jadwal:
+        kode = j.get("kode_mata_kuliah")
+        if not kode:
+            continue
+        nama_matkul_map.setdefault(kode, j.get("mata_kuliah") or kode)
+        if tahun_ajaran_id and j.get("tahun_ajaran_id") == tahun_ajaran_id:
+            allowed_kode.add(kode)
+
+    # ── agregasi per (kode_matkul, kelas, kode_dosen) ───────────────────────
+    groups: dict = {}
+    for r in reports:
+        kode  = r.get("kode_matkul")
+        kelas = r.get("kelas")
+        dosen = r.get("kode_dosen")
+
+        if tahun_ajaran_id and kode not in allowed_kode:
+            continue
+
+        key = (kode, kelas, dosen)
+        g = groups.setdefault(key, {
+            "kode_matkul":   kode,
+            "kelas":         kelas,
+            "kode_dosen":    dosen,
+            "total_done":    0,
+            "materi_scores": [],
+            "aktual_total":  0.0,
+            "n_pertemuan":   0,
+        })
+        g["total_done"] += 1
+
+        mw = _materi_weight(r.get("kesesuaian_materi"))
+        if mw is not None:
+            g["materi_scores"].append(mw)
+
+        stats = stats_by_report.get(r["id"])
+        if stats:
+            ptm = stats.get("pertemuan_ke")
+            if ptm is not None and ptm not in EXCLUDED_PERTEMUAN:
+                g["aktual_total"] += _actual_minutes_from_stats(stats)
+                g["n_pertemuan"]  += 1
+
+    # ── susun output ─────────────────────────────────────────────────────────
+    out = []
+    for g in groups.values():
+        materi = g["materi_scores"]
+        ketepatan_materi = round(sum(materi) / len(materi), 1) if materi else None
+
+        expected_per = rps_minutes.get(g["kode_matkul"])
+        n = g["n_pertemuan"]
+        harapan_total = expected_per * n if (expected_per and n) else 0
+        pct_waktu = (
+            round(min(g["aktual_total"] / harapan_total * 100, 100.0), 1)
+            if harapan_total > 0 else None
+        )
+
+        out.append({
+            "kode_matkul":                    g["kode_matkul"],
+            "nama_matkul":                    nama_matkul_map.get(g["kode_matkul"], g["kode_matkul"]),
+            "kelas":                          g["kelas"],
+            "kode_dosen":                     g["kode_dosen"],
+            "nama_dosen":                     nama_dosen_map.get(g["kode_dosen"], g["kode_dosen"]),
+            "ketepatan_materi":               ketepatan_materi,
+            "ketepatan_waktu_mengajar":       pct_waktu,
+            "total_pertemuan":                g["total_done"],
+            "dinilai_materi":                 len(materi),
+            "pertemuan_dihitung":             n,
+            "durasi_aktual_total":            round(g["aktual_total"]),
+            "durasi_harapan_total":           harapan_total,
+            "durasi_harapan_per_pertemuan":   expected_per,
+        })
+
+    out.sort(key=lambda x: (str(x["kode_matkul"] or ""), str(x["kelas"] or "")))
+    logger.info(f"[EVAL] kelas-summary: {len(out)} grup (ta={tahun_ajaran_id})")
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TABEL DOSEN — % Performa
+# Performa = bobot-rata: Materi 50% · Waktu 30% · Kehadiran 20%
+# Komponen yang tidak ada → bobot dinormalisasi ulang
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/dosen-performa")
+def get_dosen_performa(
+    tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+):
+    # ── reports done ─────────────────────────────────────────────────────────
+    reports = (
+        supabase.table("reports")
+        .select("id, kode_matkul, kode_dosen, kesesuaian_materi")
+        .eq("status", "done")
+        .execute()
+        .data or []
+    )
+
+    # ── activity_stats per report ────────────────────────────────────────────
+    report_ids = [r["id"] for r in reports]
+    stats_by_report: dict = {}
+    if report_ids:
+        for s in (
+            supabase.table("activity_stats")
+            .select("report_id, pertemuan_ke, ceramah_sec, tanya_jawab_sec, diskusi_sec, diam_sec")
+            .in_("report_id", report_ids)
+            .execute()
+            .data or []
+        ):
+            rid = s.get("report_id")
+            if rid is not None and rid not in stats_by_report:
+                stats_by_report[rid] = s
+
+    # ── durasi harapan RPS per kode_matkul ──────────────────────────────────
+    rps_minutes: dict = {}
+    for r in (
+        supabase.table("rps_pertemuan")
+        .select("kode_matkul, pengalaman_pembelajaran_mahasiswa")
+        .execute()
+        .data or []
+    ):
+        kode = r.get("kode_matkul")
+        if kode and kode not in rps_minutes:
+            mnt = _parse_rps_minutes_eval(r.get("pengalaman_pembelajaran_mahasiswa"))
+            if mnt:
+                rps_minutes[kode] = mnt
+
+    # ── dosen: id→kode, kode→nama ────────────────────────────────────────────
+    dosen_rows = (
+        supabase.table("dosen")
+        .select("id, kode_dosen, nama_lengkap")
+        .execute()
+        .data or []
+    )
+    kode_by_dosen_id = {d["id"]: d.get("kode_dosen") for d in dosen_rows if d.get("id") is not None}
+    nama_dosen_map   = {
+        d["kode_dosen"]: (d.get("nama_lengkap") or "").strip()
+        for d in dosen_rows if d.get("kode_dosen")
+    }
+
+    # ── filter Tahun Ajaran ──────────────────────────────────────────────────
+    allowed_kode: set   = set()
+    allowed_jadwal: set = set()
+    if tahun_ajaran_id:
+        for j in (
+            supabase.table("jadwal_kuliah")
+            .select("id, kode_mata_kuliah, tahun_ajaran_id")
+            .eq("tahun_ajaran_id", tahun_ajaran_id)
+            .execute()
+            .data or []
+        ):
+            if j.get("kode_mata_kuliah"):
+                allowed_kode.add(j["kode_mata_kuliah"])
+            if j.get("id") is not None:
+                allowed_jadwal.add(j["id"])
+
+    # ── agregasi per kode_dosen ──────────────────────────────────────────────
+    agg: dict = {}
+
+    def _slot(kode_dosen):
+        return agg.setdefault(kode_dosen, {
+            "materi_scores": [],
+            "aktual_total":  0.0,
+            "harapan_total": 0.0,
+            "hadir_tepat":   0,
+            "hadir_total":   0,
+        })
+
+    for r in reports:
+        kode_dosen  = r.get("kode_dosen")
+        kode_matkul = r.get("kode_matkul")
+        if not kode_dosen:
+            continue
+        if tahun_ajaran_id and kode_matkul not in allowed_kode:
+            continue
+
+        g = _slot(kode_dosen)
+
+        mw = _materi_weight(r.get("kesesuaian_materi"))
+        if mw is not None:
+            g["materi_scores"].append(mw)
+
+        stats = stats_by_report.get(r["id"])
+        expected_per = rps_minutes.get(kode_matkul)
+        if stats and expected_per:
+            ptm = stats.get("pertemuan_ke")
+            if ptm is not None and ptm not in EXCLUDED_PERTEMUAN:
+                g["aktual_total"]  += _actual_minutes_from_stats(stats)
+                g["harapan_total"] += expected_per
+
+    # ── kehadiran dari rec_session ───────────────────────────────────────────
+    for s in (
+        supabase.table("rec_session")
+        .select("dosen_id, jadwal_id, kehadiran")
+        .execute()
+        .data or []
+    ):
+        if tahun_ajaran_id and s.get("jadwal_id") not in allowed_jadwal:
+            continue
+        kehadiran = s.get("kehadiran")
+        if not kehadiran:
+            continue
+        kode_dosen = kode_by_dosen_id.get(s.get("dosen_id"))
+        if not kode_dosen:
+            continue
+        g = _slot(kode_dosen)
+        g["hadir_total"] += 1
+        if kehadiran == "tepat_waktu":
+            g["hadir_tepat"] += 1
+
+    # ── susun output + hitung performa ──────────────────────────────────────
+    out = []
+    for kode_dosen, g in agg.items():
+        materi = g["materi_scores"]
+        materi_pct = round(sum(materi) / len(materi), 1) if materi else None
+
+        waktu_pct = (
+            round(min(g["aktual_total"] / g["harapan_total"] * 100, 100.0), 1)
+            if g["harapan_total"] > 0 else None
+        )
+
+        kehadiran_pct = (
+            round(g["hadir_tepat"] / g["hadir_total"] * 100, 1)
+            if g["hadir_total"] > 0 else None
+        )
+
+        # Bobot-rata dengan normalisasi ulang untuk komponen yang ada
+        comp = [
+            (PERFORMA_WEIGHTS["materi"],    materi_pct),
+            (PERFORMA_WEIGHTS["waktu"],     waktu_pct),
+            (PERFORMA_WEIGHTS["kehadiran"], kehadiran_pct),
+        ]
+        avail = [(w, v) for w, v in comp if v is not None]
+        if avail:
+            total_w = sum(w for w, _ in avail)
+            performa = round(sum(w * v for w, v in avail) / total_w, 1)
+        else:
+            performa = None
+
+        out.append({
+            "kode_dosen":               kode_dosen,
+            "nama_dosen":               nama_dosen_map.get(kode_dosen, kode_dosen),
+            "performa":                 performa,
+            "ketepatan_materi":         materi_pct,
+            "ketepatan_waktu_mengajar": waktu_pct,
+            "kehadiran":                kehadiran_pct,
+        })
+
+    out.sort(key=lambda x: (x["performa"] is None, -(x["performa"] or 0)))
+    logger.info(f"[EVAL] dosen-performa: {len(out)} dosen (ta={tahun_ajaran_id})")
+    return out

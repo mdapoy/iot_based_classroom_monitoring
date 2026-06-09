@@ -16,6 +16,74 @@ last_scan_time = 0
 
 router = APIRouter(tags=["Monitoring"])
 
+
+# =========================================================
+# DERIVASI KEHADIRAN & AKTIVITAS (tidak hardcode)
+# Sumber asli:
+#   • kehadiran  → tabel rec_session   (link: jadwal_id + tanggal)
+#   • aktivitas  → tabel activity_stats (link: kode_matkul + tanggal)
+# =========================================================
+KEHADIRAN_LABEL = {
+    "tepat_waktu": "Tepat Waktu",
+    "terlambat":   "Terlambat",
+}
+
+AKTIVITAS_LABEL = {
+    "ceramah":     "Ceramah",
+    "tanya_jawab": "Tanya Jawab",
+    "diskusi":     "Diskusi",
+    "diam":        "Tidak Ada",
+}
+
+
+def format_kehadiran(raw):
+    """rec_session.kehadiran ('tepat_waktu') → 'Tepat Waktu'. None kalau kosong."""
+    if not raw:
+        return None
+    return KEHADIRAN_LABEL.get(str(raw).lower(), str(raw))
+
+
+def format_aktivitas(raw):
+    """activity_stats.dominant_activity ('CERAMAH') → 'Ceramah'. None kalau kosong."""
+    if not raw:
+        return None
+    return AKTIVITAS_LABEL.get(str(raw).lower(), str(raw).title())
+
+
+def build_kehadiran_index():
+    """Index kehadiran dari rec_session, key = (jadwal_id, tanggal).
+    Order by id → baris terbaru menimpa yang lama."""
+    rows = (
+        supabase.table("rec_session")
+        .select("jadwal_id, tanggal, kehadiran")
+        .order("id")
+        .execute()
+        .data or []
+    )
+    idx = {}
+    for r in rows:
+        if r.get("jadwal_id") and r.get("tanggal"):
+            idx[(r["jadwal_id"], r["tanggal"])] = r.get("kehadiran")
+    return idx
+
+
+def build_activity_index():
+    """Index activity_stats, key = (kode_matkul, tanggal).
+    Simpan seluruh baris agar breakdown persen bisa dipakai juga."""
+    rows = (
+        supabase.table("activity_stats")
+        .select("kode_matkul, tanggal, dominant_activity, "
+                "ceramah_pct, tanya_jawab_pct, diskusi_pct, diam_pct, pertemuan_ke")
+        .order("id")
+        .execute()
+        .data or []
+    )
+    idx = {}
+    for r in rows:
+        if r.get("kode_matkul") and r.get("tanggal"):
+            idx[(r["kode_matkul"], r["tanggal"])] = r
+    return idx
+
 @router.post("/monitoring/scan-drive")
 def scan_drive(user: dict = Depends(optional_authenticated)):
 
@@ -134,12 +202,13 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
 
         # =========================
         # KUMPULKAN UNTUK BATCH INSERT
+        # CATATAN: kehadiran & aktivitas_dominan TIDAK diisi di sini.
+        # Keduanya diturunkan saat dibaca dari rec_session / activity_stats,
+        # sehingga selalu mencerminkan data terkini.
         # =========================
         rows_to_insert.append({
             "jadwal_id":      jadwal["id"],
             "tanggal":        str(parsed["tanggal"]),
-            "kehadiran":      "Tepat Waktu",
-            "aktivitas_dominan": "Ceramah",
             "video_url":      video_url,
             "video_file_id":  video["id"],
             "audio_file_id":  audio_id,
@@ -186,6 +255,10 @@ def get_monitoring(
     else:
         monitoring = supabase.table("monitoring").select("*, jadwal_kuliah(*)").execute()
 
+    # Index sumber data asli (masing-masing 1 query) untuk derivasi non-hardcode
+    kehadiran_idx = build_kehadiran_index()
+    activity_idx  = build_activity_index()
+
     data = []
 
     for item in monitoring.data:
@@ -197,18 +270,25 @@ def get_monitoring(
         if is_matkul_blacklisted(nama_matkul):
             continue
 
+        # ── Kehadiran: dari rec_session via (jadwal_id, tanggal) ──
+        kehadiran_raw = kehadiran_idx.get((item.get("jadwal_id"), item.get("tanggal")))
+
+        # ── Aktivitas: dari activity_stats via (kode_matkul, tanggal) ──
+        act = activity_idx.get((j.get("kode_mata_kuliah"), item.get("tanggal")))
+        aktivitas_raw = act.get("dominant_activity") if act else None
+
         data.append({
-            "id": item["id"],
-            "tanggal": item["tanggal"],
-            "jam": f"{j.get('jam_mulai', '')} - {j.get('jam_selesai', '')}",
-            "ruangan": j.get("ruangan", ""),
-            "matkul": nama_matkul,
-            "kode": j.get("kode_mata_kuliah", ""),
-            "kodeDosen": j.get("dosen_utama", ""),
-            "kehadiran": item["kehadiran"],
-            "aktivitas": item["aktivitas_dominan"],
-            "kelas": j.get("kelas", ""),
-            "video_url": item.get("video_url"),
+            "id":            item["id"],
+            "tanggal":       item["tanggal"],
+            "jam":           f"{j.get('jam_mulai', '')} - {j.get('jam_selesai', '')}",
+            "ruangan":       j.get("ruangan", ""),
+            "matkul":        nama_matkul,
+            "kode":          j.get("kode_mata_kuliah", ""),
+            "kodeDosen":     j.get("dosen_utama", ""),
+            "kehadiran":     format_kehadiran(kehadiran_raw) or "-",
+            "aktivitas":     format_aktivitas(aktivitas_raw) or "-",
+            "kelas":         j.get("kelas", ""),
+            "video_url":     item.get("video_url"),
             "audio_file_id": item.get("audio_file_id"),
             "base_filename": item.get("base_filename"),
         })
@@ -226,4 +306,45 @@ def get_monitoring_detail(monitoring_id: int, user: dict = Depends(optional_auth
         .execute()
     )
 
-    return response.data
+    m = response.data
+    if not m:
+        return m
+
+    j = m.get("jadwal_kuliah") or {}
+
+    # ── Kehadiran: dari rec_session (jadwal_id + tanggal) ──
+    keh = (
+        supabase.table("rec_session")
+        .select("kehadiran")
+        .eq("jadwal_id", m.get("jadwal_id"))
+        .eq("tanggal", m.get("tanggal"))
+        .order("id", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    kehadiran_raw = keh[0]["kehadiran"] if keh else None
+    m["kehadiran"] = format_kehadiran(kehadiran_raw) or "-"
+
+    # ── Aktivitas: dari activity_stats (kode_matkul + tanggal) ──
+    act = (
+        supabase.table("activity_stats")
+        .select("dominant_activity, ceramah_pct, tanya_jawab_pct, "
+                "diskusi_pct, diam_pct, pertemuan_ke")
+        .eq("kode_matkul", j.get("kode_mata_kuliah"))
+        .eq("tanggal", m.get("tanggal"))
+        .order("id", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if act:
+        stats = act[0]
+        m["activity_stats"]    = stats
+        m["aktivitas_dominan"] = format_aktivitas(stats.get("dominant_activity")) or "-"
+        m["pertemuan_ke"]      = stats.get("pertemuan_ke")
+    else:
+        m["activity_stats"]    = None
+        m["aktivitas_dominan"] = "-"
+
+    return m
