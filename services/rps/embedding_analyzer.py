@@ -19,13 +19,13 @@ from services.summarizer.summarizer import client, MODELS, classify_gemini_error
 
 load_dotenv()
 
-EMBED_MODEL   = "text-embedding-004"
+EMBED_MODEL   = "gemini-embedding-001"   # text-embedding-004 renamed
 THRESHOLD     = 0.75   # cosine similarity minimum to count as "covered"
 MAX_SNIPPET   = 300    # chars of best_chunk passed to LLM for reasoning
 _GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
 _EMBED_URL    = (
-    "https://generativelanguage.googleapis.com/v1/models/"
-    f"{EMBED_MODEL}:batchEmbedContents?key={{key}}"
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    f"{EMBED_MODEL}:embedContent?key={{key}}"
 )
 
 
@@ -71,32 +71,26 @@ def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
 
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Batch-embed texts via Gemini REST v1 batchEmbedContents.
+    """Embed texts via Gemini REST v1beta embedContent.
 
-    Uses httpx directly because the google-genai SDK targets v1beta where
-    text-embedding-004 is unavailable. The v1 stable REST endpoint supports
-    true batch embedding in a single HTTP call.
+    gemini-embedding-001 only supports the singular embedContent endpoint —
+    batchEmbedContents is not available. We reuse a single httpx.Client for
+    all texts to avoid TCP connection overhead per call.
     """
     if not texts:
         return []
 
     url = _EMBED_URL.format(key=_GEMINI_KEY)
-    payload = {
-        "requests": [
-            {
-                "model": f"models/{EMBED_MODEL}",
-                "content": {"parts": [{"text": t}]},
-            }
-            for t in texts
-        ]
-    }
+    embeddings = []
 
     with httpx.Client(timeout=60) as http:
-        resp = http.post(url, json=payload)
-        resp.raise_for_status()
+        for text in texts:
+            payload = {"content": {"parts": [{"text": text}]}}
+            resp = http.post(url, json=payload)
+            resp.raise_for_status()
+            embeddings.append(resp.json()["embedding"]["values"])
 
-    data = resp.json()
-    return [item["embedding"]["values"] for item in data["embeddings"]]
+    return embeddings
 
 
 # ══════════════════════════════════════════════════════════════════════════════
