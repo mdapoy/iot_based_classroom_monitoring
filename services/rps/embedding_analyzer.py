@@ -60,11 +60,19 @@ def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
 
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Batch-embed texts using Gemini text-embedding-004."""
+    """Embed texts one-by-one using Gemini text-embedding-004.
+
+    The SDK's embed_content does not support passing a list of strings as
+    separate documents (it treats them as multi-turn conversation parts).
+    We call it once per text and collect the results.
+    """
     if not texts:
         return []
-    result = client.models.embed_content(model=EMBED_MODEL, contents=texts)
-    return [e.values for e in result.embeddings]
+    embeddings = []
+    for text in texts:
+        resp = client.models.embed_content(model=EMBED_MODEL, contents=text)
+        embeddings.append(resp.embeddings[0].values)
+    return embeddings
 
 
 # ══════════════════════════════════════════════════════════════════════════════
