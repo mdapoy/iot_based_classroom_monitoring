@@ -7,15 +7,26 @@ snippets.
 """
 
 import math
+import os
 import re
 import time
+
+import httpx
+from dotenv import load_dotenv
 
 from core.logger import logger
 from services.summarizer.summarizer import client, MODELS, classify_gemini_error
 
-EMBED_MODEL  = "text-embedding-004"
-THRESHOLD    = 0.75   # cosine similarity minimum to count as "covered"
-MAX_SNIPPET  = 300    # chars of best_chunk passed to LLM for reasoning
+load_dotenv()
+
+EMBED_MODEL   = "text-embedding-004"
+THRESHOLD     = 0.75   # cosine similarity minimum to count as "covered"
+MAX_SNIPPET   = 300    # chars of best_chunk passed to LLM for reasoning
+_GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
+_EMBED_URL    = (
+    "https://generativelanguage.googleapis.com/v1/models/"
+    f"{EMBED_MODEL}:batchEmbedContents?key={{key}}"
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -60,19 +71,32 @@ def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
 
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed texts one-by-one using Gemini text-embedding-004.
+    """Batch-embed texts via Gemini REST v1 batchEmbedContents.
 
-    The SDK's embed_content does not support passing a list of strings as
-    separate documents (it treats them as multi-turn conversation parts).
-    We call it once per text and collect the results.
+    Uses httpx directly because the google-genai SDK targets v1beta where
+    text-embedding-004 is unavailable. The v1 stable REST endpoint supports
+    true batch embedding in a single HTTP call.
     """
     if not texts:
         return []
-    embeddings = []
-    for text in texts:
-        resp = client.models.embed_content(model=EMBED_MODEL, contents=text)
-        embeddings.append(resp.embeddings[0].values)
-    return embeddings
+
+    url = _EMBED_URL.format(key=_GEMINI_KEY)
+    payload = {
+        "requests": [
+            {
+                "model": f"models/{EMBED_MODEL}",
+                "content": {"parts": [{"text": t}]},
+            }
+            for t in texts
+        ]
+    }
+
+    with httpx.Client(timeout=60) as http:
+        resp = http.post(url, json=payload)
+        resp.raise_for_status()
+
+    data = resp.json()
+    return [item["embedding"]["values"] for item in data["embeddings"]]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
