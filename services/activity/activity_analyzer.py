@@ -241,6 +241,18 @@ def compute_activity_summary(
         else:
             totals["CERAMAH"] += dur  # fallback
 
+    # Jika timeline Gemini tidak menutupi seluruh durasi (terpotong / truncated),
+    # tambahkan sisa waktu ke aktivitas dominan saat ini atau CERAMAH sebagai fallback.
+    covered  = sum(totals.values())
+    gap      = (total_duration_sec or 0) - covered
+    if gap > 5:  # toleransi 5 detik untuk rounding
+        dominant_so_far = max(totals, key=lambda k: totals[k]) if covered > 0 else "CERAMAH"
+        totals[dominant_so_far] += gap
+        logger.warning(
+            f"[ACTIVITY] Timeline gap {gap:.0f}s tidak ter-cover — "
+            f"dialokasikan ke {dominant_so_far}"
+        )
+
     base     = total_duration_sec or sum(totals.values()) or 1.0
     dominant = max(totals, key=lambda k: totals[k])
 

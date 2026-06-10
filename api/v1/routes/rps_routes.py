@@ -394,6 +394,56 @@ def confirm_insert_rps(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/matkul/{kode_matkul}")
+def delete_rps_by_matkul(kode_matkul: str, user: dict = Depends(optional_authenticated)):
+    """Hapus seluruh pertemuan RPS untuk satu kode mata kuliah."""
+    try:
+        kode = kode_matkul.strip()
+        res = (
+            supabase.table("rps_pertemuan")
+            .delete()
+            .eq("kode_matkul", kode)
+            .execute()
+        )
+        deleted = len(res.data) if res.data else 0
+        logger.info(f"[RPS] deleted by matkul={kode} count={deleted}")
+        return {
+            "status": "success",
+            "message": f"{deleted} pertemuan RPS untuk {kode} berhasil dihapus",
+            "deleted": deleted,
+        }
+    except Exception as e:
+        logger.error(f"[RPS] delete by matkul error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{rps_id}")
+def delete_rps(rps_id: int, user: dict = Depends(optional_authenticated)):
+    """Hapus satu baris RPS pertemuan berdasarkan id."""
+    try:
+        existing = (
+            supabase.table("rps_pertemuan")
+            .select("id")
+            .eq("id", rps_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail="Data RPS tidak ditemukan")
+
+        supabase.table("rps_pertemuan").delete().eq("id", rps_id).execute()
+        logger.info(f"[RPS] deleted id={rps_id}")
+        return {"status": "success", "message": "Data RPS berhasil dihapus"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[RPS] delete error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("")
 def get_rps_list(
     kode_matkul: Optional[str] = None,

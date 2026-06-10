@@ -20,7 +20,6 @@ from services.summarizer.summarizer import client, MODELS, classify_gemini_error
 load_dotenv()
 
 EMBED_MODEL   = "gemini-embedding-001"   # text-embedding-004 renamed
-THRESHOLD     = 0.75   # cosine similarity minimum to count as "covered"
 MAX_SNIPPET   = 300    # chars of best_chunk passed to LLM for reasoning
 _GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
 _EMBED_URL    = (
@@ -100,57 +99,49 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
 def check_subbab_coverage(
     subbab_list: list[str],
     chunks: list[dict],
-    threshold: float = THRESHOLD,
 ) -> dict:
     """
-    Determine which RPS sub-topics were covered in the lecture.
+    Hitung skor kesesuaian materi per subbab menggunakan raw cosine similarity.
 
-    All subbab + chunk transcripts are embedded in one batch API call.
-    For each subbab, max cosine similarity across all chunks is computed.
-    A subbab is "covered" if max_sim >= threshold.
+    Skor per subbab = max cosine similarity subbab vs semua chunk × 100 (0–100).
+    kesesuaian_pct  = rata-rata skor semua subbab.
 
-    Args:
-        subbab_list: from parse_subbab()
-        chunks:      list of audio_chunk rows — each must have 'transcript' key
-        threshold:   cosine similarity cutoff (default 0.75)
+    Tidak ada threshold biner — nilai kontinu sehingga variasi antar pertemuan
+    lebih terlihat jelas.
 
     Returns:
         {
-          pct: float|None,   # None if embedding failed
-          covered_count: int,
+          pct:         float|None,   # None jika embedding gagal
           total_count: int,
-          detail: [{subbab, covered, max_sim, best_chunk}]
+          detail:      [{subbab, score, max_sim, best_chunk}]
         }
     """
     if not subbab_list:
-        return {"pct": None, "covered_count": 0, "total_count": 0, "detail": []}
+        return {"pct": None, "total_count": 0, "detail": []}
 
     chunk_texts = [c.get("transcript", "") for c in chunks]
     chunk_texts = [t for t in chunk_texts if t and t.strip()]
 
     if not chunk_texts:
         return {
-            "pct":           0.0,
-            "covered_count": 0,
-            "total_count":   len(subbab_list),
+            "pct":         0.0,
+            "total_count": len(subbab_list),
             "detail": [
-                {"subbab": s, "covered": False, "max_sim": 0.0, "best_chunk": ""}
+                {"subbab": s, "score": 0.0, "max_sim": 0.0, "best_chunk": ""}
                 for s in subbab_list
             ],
         }
 
-    # Single batch: subbab first, then chunk transcripts
     all_texts = subbab_list + chunk_texts
     try:
         all_embeddings = _embed_texts(all_texts)
     except Exception as e:
         logger.error(f"[EMBED] batch embed gagal: {e}")
-        return {"pct": None, "covered_count": 0, "total_count": len(subbab_list), "detail": []}
+        return {"pct": None, "total_count": len(subbab_list), "detail": []}
 
     subbab_embs = all_embeddings[: len(subbab_list)]
     chunk_embs  = all_embeddings[len(subbab_list):]
 
-    covered_count = 0
     detail: list[dict] = []
 
     for subbab, s_emb in zip(subbab_list, subbab_embs):
@@ -162,27 +153,22 @@ def check_subbab_coverage(
                 best_sim = sim
                 best_idx = j
 
-        covered = best_sim >= threshold
-        if covered:
-            covered_count += 1
-
         detail.append({
             "subbab":     subbab,
-            "covered":    covered,
+            "score":      round(best_sim * 100, 1),
             "max_sim":    round(best_sim, 4),
             "best_chunk": chunk_texts[best_idx][:MAX_SNIPPET] if chunk_texts else "",
         })
 
-    pct = round(covered_count / len(subbab_list) * 100, 1)
+    pct = round(sum(d["score"] for d in detail) / len(detail), 1)
     logger.info(
-        f"[EMBED COVERAGE] covered={covered_count}/{len(subbab_list)} "
-        f"({pct}%) threshold={threshold}"
+        f"[EMBED COVERAGE] subbab={len(detail)} avg_score={pct}% "
+        f"scores={[d['score'] for d in detail]}"
     )
     return {
-        "pct":           pct,
-        "covered_count": covered_count,
-        "total_count":   len(subbab_list),
-        "detail":        detail,
+        "pct":         pct,
+        "total_count": len(subbab_list),
+        "detail":      detail,
     }
 
 
@@ -209,25 +195,25 @@ def generate_reasoning(
 
     pct   = coverage_result.get("pct", 0)
     total = coverage_result.get("total_count", 0)
-    n_ok  = coverage_result.get("covered_count", 0)
 
     lines = []
     for d in detail:
-        status  = "terbahas" if d["covered"] else "tidak terbahas"
         snippet = d["best_chunk"][:200].replace("\n", " ") if d["best_chunk"] else "-"
         lines.append(
-            f"- {d['subbab']}: {status} (sim={d['max_sim']:.2f})\n"
-            f"  Cuplikan: \"{snippet}\""
+            f"- {d['subbab']}: skor {d['score']:.0f}/100 (sim={d['max_sim']:.2f})\n"
+            f"  Cuplikan transkrip: \"{snippet}\""
         )
     subbab_ctx = "\n".join(lines)
 
     prompt = (
         f"Anda adalah analis evaluasi pembelajaran. Tulis alasan singkat (2-3 kalimat) "
-        f"mengapa nilai kesesuaian materi pertemuan ini adalah {pct:.0f}% "
-        f"({n_ok}/{total} subbab terbahas).\n\n"
+        f"mengapa rata-rata skor kesesuaian materi pertemuan ini adalah {pct:.0f}/100 "
+        f"dari {total} subbab RPS.\n\n"
         f"Topik RPS: {rps_materi}\n\n"
-        f"Hasil analisis per subbab:\n{subbab_ctx}\n\n"
-        f"Sebutkan subbab yang terbahas dan yang tidak berdasarkan data di atas. "
+        f"Skor per subbab (0–100, berdasarkan kemiripan semantik dengan transkrip kuliah):\n"
+        f"{subbab_ctx}\n\n"
+        f"Jelaskan subbab mana yang skornya tinggi (materi terbahas) dan yang rendah "
+        f"(materi kurang/tidak terbahas). "
         f"Kembalikan HANYA teks alasan, tanpa judul atau poin."
     )
 
@@ -249,11 +235,11 @@ def generate_reasoning(
                 break
 
     # Rule-based fallback
-    covered_names   = [d["subbab"] for d in detail if d["covered"]]
-    not_covered     = [d["subbab"] for d in detail if not d["covered"]]
-    parts = [f"Nilai kesesuaian {pct:.0f}% ({n_ok}/{total} subbab terbahas)."]
-    if covered_names:
-        parts.append(f"Subbab yang terbahas: {', '.join(covered_names)}.")
-    if not_covered:
-        parts.append(f"Subbab yang tidak terbahas: {', '.join(not_covered)}.")
+    high = [d["subbab"] for d in detail if d["score"] >= 60]
+    low  = [d["subbab"] for d in detail if d["score"] < 60]
+    parts = [f"Rata-rata skor kesesuaian materi {pct:.0f}/100 dari {total} subbab."]
+    if high:
+        parts.append(f"Subbab dengan skor tinggi: {', '.join(high)}.")
+    if low:
+        parts.append(f"Subbab dengan skor rendah: {', '.join(low)}.")
     return " ".join(parts)
