@@ -38,11 +38,15 @@ PERFORMA_WEIGHTS = {
 }
 
 
-def _materi_weight(nilai: Optional[str]):
-    """Konversi kategori kesesuaian_materi → skor 0..100. None kalau tak ada nilai."""
-    if not nilai:
+def _materi_weight(nilai):
+    """Konversi kesesuaian_materi → skor 0..100. Menerima float (baru) atau teks (lama)."""
+    if nilai is None:
         return None
-    v = nilai.upper().strip()
+    try:
+        return float(nilai)   # kesesuaian_pct langsung sebagai skor
+    except (TypeError, ValueError):
+        pass
+    v = str(nilai).upper().strip()
     if "TIDAK SESUAI" in v:
         return 0.0
     if "SEBAGIAN" in v:
@@ -443,7 +447,7 @@ def get_kelas_summary(
     # ── laporan yang sudah selesai ───────────────────────────────────────────
     reports = (
         supabase.table("reports")
-        .select("id, kode_matkul, kelas, kode_dosen, kesesuaian_materi")
+        .select("id, kode_matkul, kelas, kode_dosen, kesesuaian_materi, kesesuaian_pct")
         .eq("status", "done")
         .execute()
         .data or []
@@ -529,7 +533,7 @@ def get_kelas_summary(
         })
         g["total_done"] += 1
 
-        mw = _materi_weight(r.get("kesesuaian_materi"))
+        mw = _materi_weight(r.get("kesesuaian_pct") if r.get("kesesuaian_pct") is not None else r.get("kesesuaian_materi"))
         if mw is not None:
             g["materi_scores"].append(mw)
 
@@ -587,7 +591,7 @@ def get_dosen_performa(
     # ── reports done ─────────────────────────────────────────────────────────
     reports = (
         supabase.table("reports")
-        .select("id, kode_matkul, kode_dosen, kesesuaian_materi")
+        .select("id, kode_matkul, kode_dosen, kesesuaian_materi, kesesuaian_pct")
         .eq("status", "done")
         .execute()
         .data or []
@@ -673,7 +677,7 @@ def get_dosen_performa(
 
         g = _slot(kode_dosen)
 
-        mw = _materi_weight(r.get("kesesuaian_materi"))
+        mw = _materi_weight(r.get("kesesuaian_pct") if r.get("kesesuaian_pct") is not None else r.get("kesesuaian_materi"))
         if mw is not None:
             g["materi_scores"].append(mw)
 

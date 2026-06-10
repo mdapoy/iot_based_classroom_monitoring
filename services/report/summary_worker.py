@@ -14,6 +14,7 @@ from services.rps.rps_service import (
     get_nama_matkul,
 )
 from services.rps.rag_analyzer import analyze_rps
+from services.rps.embedding_analyzer import parse_subbab, check_subbab_coverage, generate_reasoning
 from services.activity.activity_analyzer import classify_activities
 from core.logger import logger
 
@@ -42,7 +43,17 @@ def _fetch_chunks(report_id: int) -> tuple[list[dict], float]:
         .execute()
     )
     chunks = res.data or []
-    total_duration_sec = len(chunks) * CHUNK_DURATION_SEC
+
+    # Hitung durasi dari end_sec utterance terakhir jika tersedia,
+    # fallback ke estimasi n_chunks × CHUNK_DURATION_SEC.
+    actual_end = 0.0
+    for ch in chunks:
+        for utt in (ch.get("utterances") or []):
+            es = float(utt.get("end_sec") or utt.get("end", 0) or 0)
+            if es > actual_end:
+                actual_end = es
+    total_duration_sec = actual_end if actual_end > 0 else len(chunks) * CHUNK_DURATION_SEC
+
     return chunks, float(total_duration_sec)
 
 
@@ -155,6 +166,9 @@ async def process_summary(report):
                 (r for r in rps_semua if r.get("pertemuan_ke") == pertemuan_ke), {}
             )
 
+            # Parse subbab untuk coverage check (dipakai di RONDE 2)
+            subbab_list = parse_subbab(rps_target.get("materi_pembelajaran", ""))
+
             # ── 4. Fetch nama lengkap mata kuliah ────────────────────
             nama_matkul = get_nama_matkul(kode_matkul)
 
@@ -200,19 +214,31 @@ async def process_summary(report):
                 )
                 activity_result = None
 
-            # ── 7. RONDE 2 — Analisis RPS + Metode (menggunakan activity_summary)
-            logger.info(f"[RONDE 2] analyze_rps | report={report_id}")
+            # ── 7. RONDE 2 — analyze_rps + subbab coverage (paralel)
+            logger.info(f"[RONDE 2] analyze_rps + coverage | report={report_id}")
 
-            analysis_raw = await asyncio.to_thread(
-                analyze_rps,
-                transcript,
-                rps_semua,
-                pertemuan_ke,
-                activity_result,   # None jika aktivitas gagal
-            )
+            ronde2_tasks = [
+                asyncio.to_thread(analyze_rps, transcript, rps_semua, pertemuan_ke, activity_result),
+            ]
+            if subbab_list:
+                ronde2_tasks.append(asyncio.to_thread(check_subbab_coverage, subbab_list, chunks))
+
+            ronde2_results  = await asyncio.gather(*ronde2_tasks)
+            analysis_raw    = ronde2_results[0]
+            coverage_result = ronde2_results[1] if len(ronde2_results) > 1 else {"pct": None, "detail": []}
 
             if not analysis_raw.get("success"):
                 raise Exception(analysis_raw.get("error", "Analisis RPS gagal"))
+
+            # Generate reasoning jika coverage tersedia
+            kesesuaian_pct    = coverage_result.get("pct")
+            kesesuaian_reason = ""
+            if kesesuaian_pct is not None and coverage_result.get("detail"):
+                kesesuaian_reason = await asyncio.to_thread(
+                    generate_reasoning,
+                    coverage_result,
+                    rps_target.get("materi_pembelajaran", ""),
+                )
 
             # ── 8. Susun dict analisis lengkap untuk PDF ─────────────
             analysis = {
@@ -265,6 +291,12 @@ async def process_summary(report):
             update_payload["kesesuaian_materi"] = analysis_raw.get("kesesuaian",        "-")
             update_payload["status_waktu"]      = analysis_raw.get("status_waktu",      "-")
             update_payload["kesesuaian_metode"] = analysis_raw.get("kesesuaian_metode", "-")
+
+            # Simpan hasil embedding coverage
+            if kesesuaian_pct is not None:
+                update_payload["kesesuaian_pct"]       = kesesuaian_pct
+            if kesesuaian_reason:
+                update_payload["kesesuaian_reasoning"] = kesesuaian_reason
 
             if activity_result:
                 # Simpan ringkasan aktivitas (tanpa activity_timeline panjang)

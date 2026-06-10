@@ -234,11 +234,8 @@ def compute_activity_summary(
 
     for seg in activity_timeline:
         act = seg.get("activity", "CERAMAH").upper()
-        # start_sec/end_sec dari Gemini dalam satuan MENIT (Gemini membaca
-        # label window "05:00" sebagai angka menit, bukan detik).
-        # Konversi ke detik agar konsisten dengan total_duration_sec.
-        dur_min = float(seg.get("end_sec", 0)) - float(seg.get("start_sec", 0))
-        dur     = dur_min * 60  # menit → detik
+        # Gemini mengembalikan start_sec/end_sec dalam DETIK sesuai instruksi prompt.
+        dur = float(seg.get("end_sec", 0)) - float(seg.get("start_sec", 0))
         if act in totals:
             totals[act] += dur
         else:

@@ -44,10 +44,7 @@ def _derive_semester_label() -> str:
 
 
 def _majority_kesesuaian(values: list[str]) -> str:
-    """
-    Tentukan kesesuaian matkul dari list nilai per pertemuan.
-    Gunakan worst-case: jika ada satu TIDAK SESUAI → keseluruhan Tidak Sesuai.
-    """
+    """Worst-case text aggregation (fallback untuk data lama tanpa kesesuaian_pct)."""
     vals = [v.upper().strip() for v in values if v and v.strip() not in ("-", "")]
     if not vals:
         return "-"
@@ -56,6 +53,42 @@ def _majority_kesesuaian(values: list[str]) -> str:
     if any("SEBAGIAN" in v for v in vals):
         return "Sebagian Sesuai"
     return "Sesuai"
+
+
+def _avg_kesesuaian_pct(values) -> float | None:
+    """
+    Rata-rata kesesuaian materi (%).
+    Menerima campuran float (data baru) dan string (data lama).
+    String lama dikonversi: Sesuai=100, Sebagian=50, Tidak=0.
+    Return None jika semua nilai kosong.
+    """
+    nums: list[float] = []
+    for v in values:
+        if v is None or str(v).strip() in ("-", ""):
+            continue
+        try:
+            nums.append(float(v))
+            continue
+        except (TypeError, ValueError):
+            pass
+        s = str(v).upper()
+        if "TIDAK SESUAI" in s:
+            nums.append(0.0)
+        elif "SEBAGIAN" in s:
+            nums.append(50.0)
+        elif "SESUAI" in s:
+            nums.append(100.0)
+    if not nums:
+        return None
+    return round(sum(nums) / len(nums), 1)
+
+
+def _fmt_kes_display(val) -> str:
+    """Format kesesuaian_rps untuk prompt LLM dan teks: float → '75%', string → as-is."""
+    try:
+        return f"{float(val):.0f}%"
+    except (TypeError, ValueError):
+        return str(val or "-")
 
 
 def _mode_activity(values: list[str]) -> str:
@@ -83,18 +116,33 @@ def _format_aktivitas_str(row: dict) -> str:
 
 def _status_kinerja(matkul_list: list[dict]) -> str:
     """
-    Tentukan status kinerja keseluruhan dosen berdasarkan semua matkul.
-      Baik             : semua SESUAI + rata-rata tepat waktu ≥ 80%
-      Cukup            : ada SEBAGIAN SESUAI atau rata-rata tepat waktu < 80%
-      Perlu Perhatian  : ada TIDAK SESUAI
+    Status kinerja dosen dari semua matkul.
+    Perlu Perhatian : ada matkul dengan skor kesesuaian < 50
+    Cukup           : ada matkul 50-79 atau rata-rata tepat waktu < 80%
+    Baik            : semua ≥ 80% kesesuaian + tepat waktu rata-rata ≥ 80%
     """
-    kesesuaian_list = [m["kesesuaian_rps"] for m in matkul_list]
-    tepat_list      = [m["pct_tepat_waktu"] for m in matkul_list]
-    avg_tepat       = sum(tepat_list) / len(tepat_list) if tepat_list else 0
+    tepat_list = [m["pct_tepat_waktu"] for m in matkul_list]
+    avg_tepat  = sum(tepat_list) / len(tepat_list) if tepat_list else 0
 
-    if any("Tidak Sesuai" in k for k in kesesuaian_list):
+    kes_scores: list[float] = []
+    for m in matkul_list:
+        k = m["kesesuaian_rps"]
+        try:
+            kes_scores.append(float(k))
+        except (TypeError, ValueError):
+            s = str(k).upper()
+            if "TIDAK" in s:
+                kes_scores.append(0.0)
+            elif "SEBAGIAN" in s:
+                kes_scores.append(50.0)
+            elif "SESUAI" in s:
+                kes_scores.append(100.0)
+
+    min_kes = min(kes_scores) if kes_scores else 100.0
+
+    if min_kes < 50:
         return "Perlu Perhatian"
-    if any("Sebagian" in k for k in kesesuaian_list) or avg_tepat < 80:
+    if min_kes < 80 or avg_tepat < 80:
         return "Cukup"
     return "Baik"
 
@@ -108,12 +156,12 @@ def _generate_kesimpulan_matkul(matkul_data: dict, max_retries: int = 3) -> str:
     kode    = matkul_data.get("kode_matkul", "-")
     total   = matkul_data.get("total_pertemuan", 0)
     tepat   = matkul_data.get("pct_tepat_waktu", 0.0)
-    kes_rps = matkul_data.get("kesesuaian_rps", "-")
+    kes_rps = _fmt_kes_display(matkul_data.get("kesesuaian_rps", "-"))
     metode  = matkul_data.get("metode_dominan", "-")
 
     pertemuan_lines = [
         f"  Pertemuan {p['pertemuan_ke']:>2}: {str(p['topik'])[:50]}"
-        f" | Kesesuaian: {p['kesesuaian_materi']}"
+        f" | Kesesuaian: {_fmt_kes_display(p.get('kesesuaian_pct') if p.get('kesesuaian_pct') is not None else p['kesesuaian_materi'])}"
         f" | Status: {p['status_waktu']}"
         for p in matkul_data.get("pertemuan", [])
     ]
@@ -171,7 +219,7 @@ def _generate_rekomendasi_global(eval_data: dict, max_retries: int = 3) -> str:
 
     matkul_lines = [
         f"  - {m['nama_matkul']} ({m['kode_matkul']}): "
-        f"Kesesuaian={m['kesesuaian_rps']}, "
+        f"Kesesuaian={_fmt_kes_display(m['kesesuaian_rps'])}, "
         f"Tepat Waktu={m['pct_tepat_waktu']:.1f}%, "
         f"Metode Dominan={m['metode_dominan']}"
         for m in eval_data["ringkasan"]["per_matkul"]
@@ -496,7 +544,7 @@ async def build_eval_data(
     # ── 3. Semua laporan done semester ini ────────────────────────────────────
     reports_res = (
         supabase.table("reports")
-        .select("id, kode_matkul, tanggal, kesesuaian_materi, status_waktu, kesesuaian_metode")
+        .select("id, kode_matkul, tanggal, kesesuaian_materi, kesesuaian_pct, status_waktu, kesesuaian_metode")
         .eq("kode_dosen", kode_dosen)
         .eq("status", "done")
         .gte("tanggal", SEMESTER_START_DATE)
@@ -578,6 +626,7 @@ async def build_eval_data(
                 "pertemuan_ke":      ptm,
                 "topik":             rps_map.get((kode, ptm), "-"),
                 "kesesuaian_materi": r.get("kesesuaian_materi") or "-",
+                "kesesuaian_pct":    r.get("kesesuaian_pct"),          # float|None (baru)
                 "durasi_menit":      round(total_sec / 60),
                 "status_waktu":      r.get("status_waktu")      or "-",
                 "aktivitas_str":     _format_aktivitas_str(act),
@@ -588,7 +637,10 @@ async def build_eval_data(
         total_ptm  = len(pertemuan_data)
         n_tepat    = sum(1 for p in pertemuan_data if "TEPAT" in (p["status_waktu"] or "").upper())
         pct_tepat  = round(n_tepat / total_ptm * 100, 1) if total_ptm else 0.0
-        kes_rps    = _majority_kesesuaian([p["kesesuaian_materi"] for p in pertemuan_data])
+        kes_rps    = _avg_kesesuaian_pct([p["kesesuaian_pct"] for p in pertemuan_data])
+        if kes_rps is None:
+            # Fallback ke logika teks untuk data lama tanpa kesesuaian_pct
+            kes_rps = _majority_kesesuaian([p["kesesuaian_materi"] for p in pertemuan_data])
         metode_dom = _mode_activity([
             act_by_report.get(r["id"], {}).get("dominant_activity", "-")
             for r in matkul_reports

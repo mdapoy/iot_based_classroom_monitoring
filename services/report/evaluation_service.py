@@ -184,7 +184,7 @@ def _info_card_4(
         # Value: Paragraph agar bisa wrap; jarak dari label diperbesar
         p = Paragraph(
             str(val or "-"),
-            _ps(fontName="Helvetica-Bold", fontSize=9, leading=13, textColor=C_PRI)
+            _ps(fontName="Helvetica-Bold", fontSize=9, leading=13, textColor=C_TXT)
         )
         _, th = p.wrap(CW4 - 16, 9999)
         p.drawOn(c, cx, y - 28 - th)             # top value di y-28 (was y-20)
@@ -269,7 +269,7 @@ def _matkul_card(
         ("MATA KULIAH",    nama_matkul,                      C_TXT),   # tanpa _trunc, pakai Paragraph
         ("KODE",           kode_matkul,                       C_BLU),
         ("METODE DOMINAN", _trunc(metode_dominan, 22),        C_TXT),
-        ("KESESUAIAN RPS", kesesuaian_rps,                    kes_color),
+        ("KESESUAIAN RPS", _fmt_pct(kesesuaian_rps),           kes_color),
     ]
     for i, (lbl, val, vc) in enumerate(cols):
         cx = ML + i * CW4 + 8
@@ -324,8 +324,31 @@ def _note_box(c, prefix: str, text: str, y: float, max_w: float = None) -> float
 # Helper: kesesuaian color
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _kes_color(val: str):
-    v = (val or "").upper()
+def _fmt_pct(val) -> str:
+    """Format kesesuaian: float/int → '75%', string kept as-is, None → '-'."""
+    if val is None:
+        return "-"
+    try:
+        return f"{float(val):.0f}%"
+    except (TypeError, ValueError):
+        s = str(val).strip()
+        return s if s else "-"
+
+
+def _kes_color(val):
+    """Color for kesesuaian value: ≥80% green, ≥50% gold, <50% red. Handles float and string."""
+    if val is None:
+        return C_TXT
+    try:
+        pct = float(val)
+        if pct >= 80:
+            return C_GRN
+        if pct >= 50:
+            return C_GOLD
+        return C_PRI
+    except (TypeError, ValueError):
+        pass
+    v = str(val).upper()
     if "TIDAK" in v:
         return C_PRI
     if "SEBAGIAN" in v:
@@ -378,7 +401,7 @@ def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
             (_trunc(m.get("nama_matkul", "-"), 30),    C_TXT,                                   False),
             (str(m.get("total_pertemuan", 0)),          C_TXT,                                   False),
             (f"{pct_tepat:.1f}%",                       pct_color,                               True),
-            (m.get("kesesuaian_rps", "-"),               _kes_color(m.get("kesesuaian_rps", "")), True),
+            (_fmt_pct(m.get("kesesuaian_rps")),          _kes_color(m.get("kesesuaian_rps")),     True),
         ]
         x = ML
         for (text, color, bold), w in zip(cells, _COL_A):
@@ -398,23 +421,25 @@ def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
 #        AKTIVITAS PEMBELAJARAN | KESESUAIAN AKTIVITAS
 # ══════════════════════════════════════════════════════════════════════════════
 
-_COL_B = [28, 112, 68, 42, 78, 110, 57]   # total = 495 | Aktivitas 92→110, Topik 130→112
+_COL_B = [28, 130, 68, 42, 65, 105, 57]   # total = 495 | Topik diperlebar 112→130
 _HDR_B = ["Ke-", "Topik RPS", "Kes. Materi", "Durasi", "Status Waktu", "Aktivitas", "Kes. Metode"]
 
 def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float:
     """
     Gambar tabel per pertemuan.
+    Row height dinamis — dihitung dari tinggi Paragraph tertinggi per baris.
 
     check_fn(y_val, needed) → float
         Dipanggil sebelum setiap baris/header.
         Jika ruang tidak cukup, showPage() + reset y; return y baru.
         Jika cukup, return y_val tidak berubah.
     """
-    ROW_H = 44   # was 36 — ruang untuk 4 baris aktivitas + centering
-    HDR_H = 24
+    MIN_ROW_H = 28   # tinggi minimum baris (pt)
+    TOP_PAD   = 6    # padding atas konten di dalam sel
+    HDR_H     = 24
 
     # ── Header tabel ──────────────────────────────────────────────────────────
-    y = check_fn(y, HDR_H + ROW_H)   # pastikan ada ruang untuk header + 1 baris
+    y = check_fn(y, HDR_H + MIN_ROW_H)
     c.setFillColor(C_PRI)
     c.rect(ML, y - HDR_H, CW, HDR_H, fill=1, stroke=0)
     x = ML
@@ -426,53 +451,81 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
     y -= HDR_H
 
     # ── Baris data ────────────────────────────────────────────────────────────
-    mid = ROW_H / 2   # titik tengah baris, dipakai untuk centering
-
     for i, p in enumerate(pertemuan_list):
+
+        # ── Pre-render Paragraph cells untuk dapat tinggi aktual ─────────────
+        topik_txt = str(p.get("topik") or "-")
+        akt_html  = str(p.get("aktivitas_str") or "-").replace(" · ", "<br/>")
+        kes_t_txt = str(p.get("kesesuaian_metode") or "-")
+
+        topik_st = _ps(fontSize=7, leading=10, textColor=C_TXT)
+        akt_st   = _ps(fontSize=7, leading=10, textColor=C_TXT)
+        kt_st    = _ps(fontSize=7, leading=10, fontName="Helvetica-Bold",
+                       textColor=_kes_color(kes_t_txt))
+
+        p_topik = Paragraph(topik_txt, topik_st)
+        p_akt   = Paragraph(akt_html, akt_st)
+        p_kt    = Paragraph(kes_t_txt, kt_st)
+
+        _, topik_h = p_topik.wrap(_COL_B[1] - 8, 9999)
+        _, akt_h   = p_akt.wrap(_COL_B[5] - 8, 9999)
+        _, kt_h    = p_kt.wrap(_COL_B[6] - 8, 9999)
+
+        # Tinggi baris = konten tertinggi + padding atas-bawah, min MIN_ROW_H
+        ROW_H = max(MIN_ROW_H,
+                    topik_h + TOP_PAD * 2,
+                    akt_h   + TOP_PAD * 2,
+                    kt_h    + TOP_PAD * 2)
+
         y = check_fn(y, ROW_H)
 
+        # ── Background + border ───────────────────────────────────────────────
         c.setFillColor(C_BG if i % 2 == 0 else white)
         c.setStrokeColor(C_BDR)
         c.setLineWidth(0.3)
         c.rect(ML, y - ROW_H, CW, ROW_H, fill=1, stroke=1)
 
-        topik = _trunc(str(p.get("topik") or "-"), 28)
+        mid   = ROW_H / 2
         dur   = f"{p.get('durasi_menit', 0)} mnt"
-        # Aktivitas: " · " → "<br/>" agar tiap aktivitas tampil per baris
-        akt_html = str(p.get("aktivitas_str") or "-").replace(" · ", "<br/>")
-        kes_m = str(p.get("kesesuaian_materi") or "-")
-        kes_t = str(p.get("kesesuaian_metode") or "-")
+        kes_m_raw = p.get("kesesuaian_pct") if p.get("kesesuaian_pct") is not None else p.get("kesesuaian_materi")
+        kes_m     = _fmt_pct(kes_m_raw)
         stat  = str(p.get("status_waktu") or "-")
 
-        # ── 5 kolom pertama: teks biasa, vertically centered ─────────────────
-        plain_cells = [
-            (f"Ke-{p.get('pertemuan_ke', '-')}",  C_TXT,              False),
-            (topik,                                 C_TXT,              False),
-            (kes_m,                                 _kes_color(kes_m),  True),
-            (dur,                                   C_TXT,              False),
-            (stat,                                  _waktu_color(stat), True),
-        ]
+        # ── Kolom 0: Ke- — plain, vertically centered ────────────────────────
         x = ML
-        for (text, color, bold), w in zip(plain_cells, _COL_B[:5]):
-            c.setFillColor(color)
-            c.setFont("Helvetica-Bold" if bold else "Helvetica", 7)
-            c.drawString(x + 4, y - mid - 2, text)   # vertically centered
-            x += w
+        c.setFillColor(C_TXT)
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 4, y - mid - 2, f"Ke-{p.get('pertemuan_ke', '-')}")
+        x += _COL_B[0]
 
-        # ── Kolom aktivitas (index 5): Paragraph, vertically centered ────────
-        akt_st = _ps(fontSize=7, leading=10, textColor=C_TXT)
-        p_akt  = Paragraph(akt_html, akt_st)
-        _, ah  = p_akt.wrap(_COL_B[5] - 8, 9999)
-        p_akt.drawOn(c, x + 4, y - mid - ah / 2)     # centered
+        # ── Kolom 1: Topik RPS — Paragraph full text, top-aligned ────────────
+        p_topik.drawOn(c, x + 4, y - TOP_PAD - topik_h)
+        x += _COL_B[1]
+
+        # ── Kolom 2: Kes. Materi — plain, vertically centered ────────────────
+        c.setFillColor(_kes_color(kes_m))
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(x + 4, y - mid - 2, kes_m)
+        x += _COL_B[2]
+
+        # ── Kolom 3: Durasi — plain, vertically centered ─────────────────────
+        c.setFillColor(C_TXT)
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 4, y - mid - 2, dur)
+        x += _COL_B[3]
+
+        # ── Kolom 4: Status Waktu — plain, vertically centered ───────────────
+        c.setFillColor(_waktu_color(stat))
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(x + 4, y - mid - 2, stat)
+        x += _COL_B[4]
+
+        # ── Kolom 5: Aktivitas — Paragraph, vertically centered ──────────────
+        p_akt.drawOn(c, x + 4, y - mid - akt_h / 2)
         x += _COL_B[5]
 
-        # ── Kolom kesesuaian metode (index 6): Paragraph, vertically centered ─
-        kes_t_html = kes_t   # "Sebagian Sesuai" / "Tidak Sesuai" → wrap otomatis
-        kt_st  = _ps(fontSize=7, leading=10, fontName="Helvetica-Bold",
-                     textColor=_kes_color(kes_t))
-        p_kt   = Paragraph(kes_t_html, kt_st)
-        _, kh  = p_kt.wrap(_COL_B[6] - 8, 9999)
-        p_kt.drawOn(c, x + 4, y - mid - kh / 2)      # centered
+        # ── Kolom 6: Kes. Metode — Paragraph, vertically centered ────────────
+        p_kt.drawOn(c, x + 4, y - mid - kt_h / 2)
 
         y -= ROW_H
 
@@ -582,17 +635,6 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
     # ── Section A: Ringkasan Kinerja ──────────────────────────────────────────
     y = _sec_hdr(c, "A", "RINGKASAN KINERJA MENGAJAR", y)
     y -= 12
-
-    # KPI card (4 kolom)
-    y = _kpi_card(
-        c,
-        total_matkul    = ringkasan["total_matkul"],
-        total_pertemuan = ringkasan["total_pertemuan"],
-        status_kinerja  = ringkasan["status_kinerja"],
-        periode_label   = periode_label,
-        y               = y,
-    )
-    y -= 14
 
     # Sub-header tabel
     c.setFillColor(C_TXT)
