@@ -305,6 +305,8 @@ async def process_summary(report):
                 update_payload["kesesuaian_pct"]       = kesesuaian_pct
             if kesesuaian_reason:
                 update_payload["kesesuaian_reasoning"] = kesesuaian_reason
+            if method_score is not None:
+                update_payload["method_score"] = method_score
 
             if activity_result:
                 # Simpan ringkasan aktivitas (tanpa activity_timeline panjang)
