@@ -278,16 +278,19 @@ def generate_combined_pdf(
             return str(n)
 
     # ── Unpack analysis ──────────────────────────────────────────────
-    act        = analysis.get("activity") or {}
-    kesesuaian = (analysis.get("kesesuaian")         or "-").strip()
-    status_wkt = (analysis.get("status_waktu")        or "-").strip()
+    act             = analysis.get("activity") or {}
+    kesesuaian      = (analysis.get("kesesuaian")         or "-").strip()
+    kesesuaian_pct  = analysis.get("kesesuaian_pct")   # float|None
+    status_wkt      = (analysis.get("status_waktu")        or "-").strip()
     ptm_det    = analysis.get("pertemuan_terdeteksi", pertemuan_ke)
-    penjelasan = analysis.get("penjelasan",           "-")
+    penjelasan          = analysis.get("penjelasan",           "-")
+    kesesuaian_reasoning = (analysis.get("kesesuaian_reasoning") or "").strip() or penjelasan
     materi_rps = analysis.get("materi_pembelajaran",  "-")
     peng_rps   = analysis.get("pengalaman_rps",       "-")
     met_dom    = analysis.get("metode_dominan",        "-")
-    kes_met    = (analysis.get("kesesuaian_metode")   or "-").strip()
-    penj_met   = analysis.get("penjelasan_metode",    "-")
+    kes_met      = (analysis.get("kesesuaian_metode")   or "-").strip()
+    method_score = analysis.get("method_score")   # float|None
+    penj_met     = analysis.get("penjelasan_metode",    "-")
 
     def _pct(k): return int(act.get(k, 0) or 0)
     def _min(k): return round((act.get(k, 0) or 0) / 60)
@@ -469,11 +472,16 @@ def generate_combined_pdf(
     _para(c, materi_rps, _ps(fontSize=8.5, leading=12),
           ML + 8, GT - 18, HW - 16)
 
-    # Cell: top-right — Kesesuaian materi
+    # Cell: top-right — Kesesuaian materi (angka % jika tersedia, teks jika data lama)
     c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
     c.drawString(ML + HW + 8, GT - 13, "KESESUAIAN MATERI")
-    _badge_text(c, ML + HW + 8, GT - 40,
-                C_GRN if is_sesuai else C_PRI, kesesuaian.upper())
+    if kesesuaian_pct is not None:
+        pct_f    = float(kesesuaian_pct)
+        pct_clr  = C_GRN if pct_f >= 80 else (C_GOLD if pct_f >= 50 else C_PRI)
+        _badge_text(c, ML + HW + 8, GT - 40, pct_clr, f"{pct_f:.0f}%")
+    else:
+        _badge_text(c, ML + HW + 8, GT - 40,
+                    C_GRN if is_sesuai else C_PRI, kesesuaian.upper())
 
     # Cell: bottom-left — Pertemuan terdeteksi
     c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
@@ -489,13 +497,8 @@ def generate_combined_pdf(
 
     y = GT - 2 * GH - 10
 
-    # Catatan Evaluator box
-    y = _note_box(c, "Catatan Evaluator:", penjelasan, y)
-    y -= 8
-
-    # Catatan Materi Tambahan box
-    catatan_val = catatan if catatan and catatan.strip() else "-"
-    y = _note_box(c, "Catatan Materi Tambahan:", catatan_val, y)
+    # Keterangan box (reasoning dari embedding coverage)
+    y = _note_box(c, "Keterangan:", kesesuaian_reasoning, y)
     y -= 14
 
     # ── Section C: Aktivitas ─────────────────────────────────────────
@@ -555,10 +558,20 @@ def generate_combined_pdf(
     CW3 = CW / 3
     G3T = y
 
+    # Tentukan tampilan KESESUAIAN METODE: angka jika method_score tersedia, teks jika tidak
+    if method_score is not None:
+        ms_f    = float(method_score)
+        ms_clr  = C_GRN if ms_f >= 80 else (C_GOLD if ms_f >= 50 else C_PRI)
+        kes_met_display = f"{ms_f:.0f}%"
+        kes_met_color   = ms_clr
+    else:
+        kes_met_display = kes_met.upper()
+        kes_met_color   = C_GRN if is_met_ok else C_PRI
+
     for i, (lbl, val, vtype) in enumerate([
-        ("METODE RPS (RENCANA)",     peng_rps,       "text"),
-        ("AKTIVITAS AKTUAL DOMINAN", met_dom,         "bold"),
-        ("KESESUAIAN METODE",        kes_met.upper(), "badge"),
+        ("METODE RPS (RENCANA)",     peng_rps,          "text"),
+        ("AKTIVITAS AKTUAL DOMINAN", met_dom,            "bold"),
+        ("KESESUAIAN METODE",        kes_met_display,    "badge"),
     ]):
         cx = ML + i * CW3
         c.setFillColor(C_BG)
@@ -574,8 +587,7 @@ def generate_combined_pdf(
             )
             _para(c, val, st, cx + 8, G3T - 18, CW3 - 16)
         else:
-            _badge_text(c, cx + 8, G3T - 40,
-                        C_GRN if is_met_ok else C_PRI, val)
+            _badge_text(c, cx + 8, G3T - 40, kes_met_color, val)
 
     y = G3T - GH3 - 10
 

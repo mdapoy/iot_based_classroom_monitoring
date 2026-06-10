@@ -15,6 +15,7 @@ from services.rps.rps_service import (
 )
 from services.rps.rag_analyzer import analyze_rps
 from services.rps.embedding_analyzer import parse_subbab, check_subbab_coverage, generate_reasoning
+from services.rps.method_analyzer import compute_method_score
 from services.activity.activity_analyzer import classify_activities
 from core.logger import logger
 
@@ -240,18 +241,25 @@ async def process_summary(report):
                     rps_target.get("materi_pembelajaran", ""),
                 )
 
+            # Hitung skor kesesuaian metode berbasis overlap aktivitas
+            pengalaman_rps_text = rps_target.get("pengalaman_pembelajaran_mahasiswa", "")
+            method_score = compute_method_score(pengalaman_rps_text, activity_result)
+
             # ── 8. Susun dict analisis lengkap untuk PDF ─────────────
             analysis = {
                 "pertemuan_ke":         pertemuan_ke,
                 "materi_pembelajaran":  rps_target.get("materi_pembelajaran", "-"),
-                "pengalaman_rps":       rps_target.get("pengalaman_pembelajaran_mahasiswa", "-"),
+                "pengalaman_rps":       pengalaman_rps_text or "-",
                 "kesesuaian":           analysis_raw.get("kesesuaian", "-"),
+                "kesesuaian_pct":       kesesuaian_pct,
+                "kesesuaian_reasoning": kesesuaian_reason,
                 "pertemuan_terdeteksi": analysis_raw.get("pertemuan_terdeteksi", "-"),
                 "status_waktu":         analysis_raw.get("status_waktu", "-"),
                 "penjelasan":           analysis_raw.get("penjelasan", "-"),
                 "catatan":              analysis_raw.get("catatan", "-"),
                 "metode_dominan":       analysis_raw.get("metode_dominan", "-"),
                 "kesesuaian_metode":    analysis_raw.get("kesesuaian_metode", "-"),
+                "method_score":         method_score,
                 "penjelasan_metode":    analysis_raw.get("penjelasan_metode", "-"),
                 # aktivitas summary (untuk bar di PDF)
                 "activity":             activity_result,
