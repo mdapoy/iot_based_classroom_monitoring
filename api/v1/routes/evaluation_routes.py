@@ -533,9 +533,12 @@ def get_kelas_summary(
         })
         g["total_done"] += 1
 
-        mw = _materi_weight(r.get("kesesuaian_pct") if r.get("kesesuaian_pct") is not None else r.get("kesesuaian_materi"))
+        mw = r.get("kesesuaian_pct")
         if mw is not None:
-            g["materi_scores"].append(mw)
+            try:
+                g["materi_scores"].append(float(mw))
+            except (TypeError, ValueError):
+                pass
 
         stats = stats_by_report.get(r["id"])
         if stats:
@@ -677,9 +680,12 @@ def get_dosen_performa(
 
         g = _slot(kode_dosen)
 
-        mw = _materi_weight(r.get("kesesuaian_pct") if r.get("kesesuaian_pct") is not None else r.get("kesesuaian_materi"))
+        mw = r.get("kesesuaian_pct")
         if mw is not None:
-            g["materi_scores"].append(mw)
+            try:
+                g["materi_scores"].append(float(mw))
+            except (TypeError, ValueError):
+                pass
 
         stats = stats_by_report.get(r["id"])
         expected_per = rps_minutes.get(kode_matkul)
