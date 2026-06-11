@@ -544,7 +544,7 @@ async def build_eval_data(
     # ── 3. Semua laporan done semester ini ────────────────────────────────────
     reports_res = (
         supabase.table("reports")
-        .select("id, kode_matkul, tanggal, kesesuaian_materi, kesesuaian_pct, status_waktu, kesesuaian_metode")
+        .select("id, kode_matkul, tanggal, kesesuaian_materi, kesesuaian_pct, status_waktu, kesesuaian_metode, method_score")
         .eq("kode_dosen", kode_dosen)
         .eq("status", "done")
         .gte("tanggal", SEMESTER_START_DATE)
@@ -631,6 +631,7 @@ async def build_eval_data(
                 "status_waktu":      r.get("status_waktu")      or "-",
                 "aktivitas_str":     _format_aktivitas_str(act),
                 "kesesuaian_metode": r.get("kesesuaian_metode") or "-",
+                "method_score":      r.get("method_score"),
             })
 
         # KPI per matkul
@@ -638,9 +639,6 @@ async def build_eval_data(
         n_tepat    = sum(1 for p in pertemuan_data if "TEPAT" in (p["status_waktu"] or "").upper())
         pct_tepat  = round(n_tepat / total_ptm * 100, 1) if total_ptm else 0.0
         kes_rps    = _avg_kesesuaian_pct([p["kesesuaian_pct"] for p in pertemuan_data])
-        if kes_rps is None:
-            # Fallback ke logika teks untuk data lama tanpa kesesuaian_pct
-            kes_rps = _majority_kesesuaian([p["kesesuaian_materi"] for p in pertemuan_data])
         metode_dom = _mode_activity([
             act_by_report.get(r["id"], {}).get("dominant_activity", "-")
             for r in matkul_reports

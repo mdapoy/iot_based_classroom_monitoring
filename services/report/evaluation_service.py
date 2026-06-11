@@ -193,56 +193,6 @@ def _info_card_4(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Helper: KPI card (4 kolom) — Section A
-# Kolom: TOTAL MATA KULIAH DIAMPU | TOTAL PERTEMUAN DIANALISIS |
-#        STATUS KINERJA KESELURUHAN | PERIODE ANALISIS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _kpi_card(
-    c,
-    total_matkul: int,
-    total_pertemuan: int,
-    status_kinerja: str,
-    periode_label: str,
-    y: float,
-) -> float:
-    H   = 60
-    CW4 = CW / 4
-
-    status_color = {
-        "Baik":            C_GRN,
-        "Cukup":           C_GOLD,
-        "Perlu Perhatian": C_PRI,
-    }.get(status_kinerja, C_TXT)
-
-    c.setFillColor(C_BG)
-    c.setStrokeColor(C_BDR)
-    c.setLineWidth(0.5)
-    c.rect(ML, y - H, CW, H, fill=1, stroke=1)
-
-    cols = [
-        ("TOTAL MATA KULIAH DIAMPU",    str(total_matkul),                    C_TXT),
-        ("TOTAL PERTEMUAN DIANALISIS",  str(total_pertemuan),                  C_TXT),
-        ("STATUS KINERJA KESELURUHAN",  status_kinerja,                        status_color),
-        ("PERIODE ANALISIS",            periode_label.split("(")[0].strip(),    C_BLU),
-    ]
-    for i, (lbl, val, vc) in enumerate(cols):
-        cx = ML + i * CW4 + 8
-        if i > 0:
-            c.setStrokeColor(C_BDR)
-            c.setLineWidth(0.5)
-            c.line(ML + i * CW4, y - 5, ML + i * CW4, y - H + 5)
-        c.setFillColor(C_LBL)
-        c.setFont("Helvetica", 7)
-        c.drawString(cx, y - 14, lbl)
-        c.setFillColor(vc)
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(cx, y - 38, val)
-
-    return y - H
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # Helper: 4-column card per matkul (Section B+)
 # Kolom: MATA KULIAH | KODE | METODE DOMINAN | KESESUAIAN RPS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -456,7 +406,8 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
         # ── Pre-render Paragraph cells untuk dapat tinggi aktual ─────────────
         topik_txt = str(p.get("topik") or "-")
         akt_html  = str(p.get("aktivitas_str") or "-").replace(" · ", "<br/>")
-        kes_t_txt = str(p.get("kesesuaian_metode") or "-")
+        ms_raw    = p.get("method_score")
+        kes_t_txt = _fmt_pct(ms_raw) if ms_raw is not None else str(p.get("kesesuaian_metode") or "-")
 
         topik_st = _ps(fontSize=7, leading=10, textColor=C_TXT)
         akt_st   = _ps(fontSize=7, leading=10, textColor=C_TXT)
