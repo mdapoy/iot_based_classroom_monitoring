@@ -673,37 +673,16 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
     y = cur[0]
 
     final_badge = chr(ord("B") + len(detail_matkul))
-    y = _sec_hdr(c, final_badge, "KESIMPULAN & REKOMENDASI", y)
+    y = _sec_hdr(c, final_badge, "KESIMPULAN", y)
     y -= 16
 
-    # Split rekomendasi jadi 2 paragraf (paragraf 1 = kesimpulan, paragraf 2 = rekomendasi)
     rek_paragraphs = [p.strip() for p in (rekomendasi or "").split("\n\n") if p.strip()]
-
-    if len(rek_paragraphs) >= 2:
-        para1 = rek_paragraphs[0]
-        para2 = "\n\n".join(rek_paragraphs[1:])
-    else:
-        para1 = rekomendasi or "-"
-        para2 = ""
+    kesimpulan_txt = rek_paragraphs[0] if rek_paragraphs else (rekomendasi or "-")
 
     st_body = _ps(fontSize=9.5, leading=14, alignment=TA_JUSTIFY)
 
-    # Paragraf kesimpulan
-    c.setFillColor(C_TXT)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(ML, y, "Kesimpulan")
-    y -= 10
-    y = _para(c, para1, st_body, ML, y, CW)
-    y -= 18
-
-    # Paragraf rekomendasi
-    if para2:
-        c.setFillColor(C_TXT)
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(ML, y, "Rekomendasi")
-        y -= 10
-        y = _para(c, para2, st_body, ML, y, CW)
-        y -= 20
+    y = _para(c, kesimpulan_txt, st_body, ML, y, CW)
+    y -= 20
 
     # Garis tanda tangan
     y -= 20
