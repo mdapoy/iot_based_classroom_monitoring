@@ -8,8 +8,6 @@ from core.logger import logger
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
 MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
@@ -58,6 +56,83 @@ def classify_gemini_error(error: str):
         return "429_unknown"
 
     return "unknown"
+
+
+# ── Rotating API key client ───────────────────────────────────────────────────
+
+class _ModelProxy:
+    def __init__(self, pool: "_RotatingClient"):
+        self._pool = pool
+
+    def generate_content(self, model: str, contents, **kwargs):
+        return self._pool._call(model, contents, **kwargs)
+
+
+class _RotatingClient:
+    """
+    Wrapper genai.Client yang otomatis rotasi API key saat quota habis (429).
+    Memuat GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, dst dari env.
+    """
+
+    def __init__(self):
+        keys = []
+        i = 1
+        while True:
+            suffix = "" if i == 1 else f"_{i}"
+            key = os.getenv(f"GEMINI_API_KEY{suffix}", "").strip()
+            if not key:
+                break
+            keys.append(key)
+            i += 1
+
+        if not keys:
+            raise ValueError("Tidak ada GEMINI_API_KEY yang tersedia di env")
+
+        self._keys    = keys
+        self._clients = [genai.Client(api_key=k) for k in keys]
+        self._idx     = 0
+        self.models   = _ModelProxy(self)
+
+        logger.info(f"[GEMINI POOL] {len(keys)} API key(s) loaded")
+
+    def get_current_key(self) -> str:
+        return self._keys[self._idx]
+
+    def _rotate(self) -> bool:
+        if len(self._keys) <= 1:
+            return False
+        next_idx = (self._idx + 1) % len(self._keys)
+        self._idx = next_idx
+        logger.warning(f"[KEY ROTATION] Switched to key index={self._idx}")
+        return True
+
+    def _call(self, model: str, contents, **kwargs):
+        tried: set[int] = set()
+        last_exc: Exception | None = None
+
+        while len(tried) < len(self._keys):
+            tried.add(self._idx)
+            try:
+                return self._clients[self._idx].models.generate_content(
+                    model=model, contents=contents, **kwargs
+                )
+            except Exception as e:
+                last_exc = e
+                if classify_gemini_error(str(e)) == "quota":
+                    if self._rotate() and self._idx not in tried:
+                        logger.info(f"[KEY ROTATION] Retrying with key index={self._idx}")
+                        continue
+                raise
+
+        raise last_exc or Exception("All API keys quota exhausted")
+
+
+client = _RotatingClient()
+
+
+def get_active_api_key() -> str:
+    """Return API key yang sedang aktif — dipakai embedding REST calls."""
+    return client.get_current_key()
 
 
 def summarize_text(transcript: str, nama_matkul: str = "mata kuliah", max_retries=3):

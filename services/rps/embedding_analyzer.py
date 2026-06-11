@@ -15,14 +15,13 @@ import httpx
 from dotenv import load_dotenv
 
 from core.logger import logger
-from services.summarizer.summarizer import client, MODELS, classify_gemini_error
+from services.summarizer.summarizer import client, MODELS, classify_gemini_error, get_active_api_key
 
 load_dotenv()
 
-EMBED_MODEL   = "gemini-embedding-001"   # text-embedding-004 renamed
-MAX_SNIPPET   = 300    # chars of best_chunk passed to LLM for reasoning
-_GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
-_EMBED_URL    = (
+EMBED_MODEL = "gemini-embedding-001"   # text-embedding-004 renamed
+MAX_SNIPPET = 300    # chars of best_chunk passed to LLM for reasoning
+_EMBED_URL  = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     f"{EMBED_MODEL}:embedContent?key={{key}}"
 )
@@ -79,7 +78,7 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
-    url = _EMBED_URL.format(key=_GEMINI_KEY)
+    url = _EMBED_URL.format(key=get_active_api_key())
     embeddings = []
 
     with httpx.Client(timeout=60) as http:
