@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import date, timedelta
 from dotenv import load_dotenv
 from repositories.supabase_client import supabase
@@ -6,59 +7,109 @@ from core.logger import logger
 
 load_dotenv()
 
-SEMESTER_START_DATE = os.getenv("SEMESTER_START_DATE", "2026-02-23")
+# ── Env fallback (dipakai jika DB belum punya config) ────────────────────────
+_ENV_START  = os.getenv("SEMESTER_START_DATE", "2026-02-23")
+_ENV_SKIP   = [s.strip() for s in os.getenv("SKIP_WEEKS", "2026-03-16").split(",") if s.strip()]
 
-# Tanggal Senin dari minggu-minggu yang TIDAK dihitung sebagai pertemuan kuliah
-# (FS, UTS, libur panjang, dll.) — diisi di .env, pisah koma
-# Contoh: SKIP_WEEKS=2026-03-16,2026-05-25
-_raw_skip = os.getenv("SKIP_WEEKS", "2026-03-16")
-SKIP_WEEK_MONDAYS = set()
-for s in _raw_skip.split(","):
-    s = s.strip()
-    if s:
-        try:
-            d = date.fromisoformat(s)
-            # Normalisasi ke Senin agar cocok dengan iterasi get_meeting_week()
-            # Contoh: 2026-05-27 (Rabu) → 2026-05-25 (Senin)
-            monday = d - timedelta(days=d.weekday())
-            SKIP_WEEK_MONDAYS.add(monday)
-        except ValueError:
-            logger.warning(f"[RPS] Format SKIP_WEEKS salah, abaikan: '{s}'")
+# ── In-memory cache untuk semester config ────────────────────────────────────
+_cfg_cache: dict = {"data": None, "ts": 0.0}
+_CACHE_TTL = 60  # detik
+
+
+def _env_config() -> dict:
+    """Fallback ke env vars jika DB tidak punya config untuk semester aktif."""
+    return {
+        "semester_start_date": _ENV_START,
+        "skip_dates":          _ENV_SKIP,
+    }
+
+
+def _fetch_active_config() -> dict:
+    """Query DB: ambil semester_config milik tahun_ajaran yang is_aktif=True."""
+    try:
+        ta = (
+            supabase.table("tahun_ajaran")
+            .select("id")
+            .eq("is_aktif", True)
+            .limit(1)
+            .execute()
+            .data
+        )
+        if not ta:
+            return _env_config()
+
+        cfg = (
+            supabase.table("semester_config")
+            .select("semester_start_date, skip_dates")
+            .eq("tahun_ajaran_id", ta[0]["id"])
+            .limit(1)
+            .execute()
+            .data
+        )
+        if not cfg or not cfg[0].get("semester_start_date"):
+            return _env_config()
+
+        return {
+            "semester_start_date": cfg[0]["semester_start_date"],
+            "skip_dates":          cfg[0].get("skip_dates") or [],
+        }
+    except Exception as e:
+        logger.warning(f"[RPS] Gagal fetch semester_config dari DB, pakai env: {e}")
+        return _env_config()
+
+
+def get_active_config() -> dict:
+    """Return config semester aktif dengan cache TTL 60 detik."""
+    now = time.monotonic()
+    if _cfg_cache["data"] and now - _cfg_cache["ts"] < _CACHE_TTL:
+        return _cfg_cache["data"]
+
+    data = _fetch_active_config()
+    _cfg_cache["data"] = data
+    _cfg_cache["ts"]   = now
+    return data
+
+
+def invalidate_config_cache() -> None:
+    """Paksa refresh cache pada request berikutnya."""
+    _cfg_cache["data"] = None
+    _cfg_cache["ts"]   = 0.0
 
 
 def _get_week_monday(d: date) -> date:
-    """Kembalikan tanggal Senin dari minggu yang sama dengan d."""
     return d - timedelta(days=d.weekday())
 
 
 def get_meeting_week(tanggal_str: str) -> int:
     """
-    Hitung pertemuan ke-N berdasarkan tanggal rekaman, tanggal mulai semester,
-    dan daftar minggu yang di-skip (FS, UTS, libur panjang).
-
-    Cara kerja:
-      Iterasi dari minggu pertama sampai minggu rekaman.
-      Setiap minggu yang ada di SKIP_WEEK_MONDAYS tidak dihitung.
-
-    Contoh (semester mulai 23 Feb 2026, FS minggu 16 Mar):
-      Rekaman 23 Mar 2026 → pertemuan ke-4 (bukan 5)
+    Hitung pertemuan ke-N berdasarkan tanggal rekaman.
+    Baca semester_start_date dan skip_dates dari DB (semester aktif),
+    fallback ke env vars jika belum dikonfigurasi.
     """
+    cfg            = get_active_config()
     recording_date = date.fromisoformat(str(tanggal_str))
-    semester_start = date.fromisoformat(SEMESTER_START_DATE)
+    semester_start = date.fromisoformat(cfg["semester_start_date"])
 
-    # Senin dari minggu rekaman dan minggu mulai semester
-    rec_monday    = _get_week_monday(recording_date)
-    start_monday  = _get_week_monday(semester_start)
+    # Normalisasi skip_dates ke set of Senin
+    skip_mondays: set[date] = set()
+    for s in cfg["skip_dates"]:
+        try:
+            d = date.fromisoformat(str(s))
+            skip_mondays.add(_get_week_monday(d))
+        except (ValueError, TypeError):
+            logger.warning(f"[RPS] Format skip_date salah, abaikan: '{s}'")
+
+    rec_monday   = _get_week_monday(recording_date)
+    start_monday = _get_week_monday(semester_start)
 
     if rec_monday < start_monday:
         logger.warning(f"[RPS] Tanggal rekaman {tanggal_str} sebelum semester mulai")
         return 1
 
     pertemuan = 0
-    current = start_monday
-
+    current   = start_monday
     while current <= rec_monday:
-        if current not in SKIP_WEEK_MONDAYS:
+        if current not in skip_mondays:
             pertemuan += 1
         current += timedelta(weeks=1)
 

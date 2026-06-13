@@ -28,6 +28,7 @@ from api.v1.routes import (
     kehadiran_routes,
     evaluation_routes,
     tahun_ajaran_routes,
+    pertemuan_routes,
 )
 
 load_dotenv()
@@ -141,3 +142,4 @@ app.include_router(aktivitas_routes.router)
 app.include_router(dashboard_routes.router)
 app.include_router(kehadiran_routes.router)
 app.include_router(evaluation_routes.router)
+app.include_router(pertemuan_routes.router)
