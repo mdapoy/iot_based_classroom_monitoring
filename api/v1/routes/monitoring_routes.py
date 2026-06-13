@@ -6,6 +6,7 @@ from repositories.cache import get_all_jadwal
 from api.v1.deps import require_admin, require_authenticated, optional_authenticated
 from core.logger import logger
 from core.matkul_filter import is_matkul_blacklisted
+from services.rps.rps_service import get_meeting_week
 from typing import Optional
 import time
 import os
@@ -286,9 +287,15 @@ def get_monitoring(
         )
         aktivitas_raw = act.get("dominant_activity") if act else None
 
+        tanggal = item["tanggal"]
+        try:
+            pertemuan_ke = get_meeting_week(tanggal) if tanggal else None
+        except Exception:
+            pertemuan_ke = act.get("pertemuan_ke") if act else None
+
         data.append({
             "id":            item["id"],
-            "tanggal":       item["tanggal"],
+            "tanggal":       tanggal,
             "jam":           f"{j.get('jam_mulai', '')} - {j.get('jam_selesai', '')}",
             "ruangan":       j.get("ruangan", ""),
             "matkul":        nama_matkul,
@@ -300,6 +307,7 @@ def get_monitoring(
             "video_url":     item.get("video_url"),
             "audio_file_id": item.get("audio_file_id"),
             "base_filename": item.get("base_filename"),
+            "pertemuan_ke":  pertemuan_ke,
         })
 
     return data
