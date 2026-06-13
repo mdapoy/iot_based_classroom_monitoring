@@ -74,15 +74,26 @@ def parse_kalender_pdf(pdf_bytes: bytes) -> list[dict]:
         f"fs_mondays={sorted(str(d) for d in fs_mondays)}"
     )
 
+    # Urutkan kode semester agar bisa inferensi end date dari semester berikutnya
+    sorted_kodes = sorted(semester_starts.keys())
+
     result = []
-    for kode, start_str in semester_starts.items():
+    for i, kode in enumerate(sorted_kodes):
+        start_str = semester_starts[kode]
         year_str, sem_num = kode.split("-")
         year     = int(year_str)
         tahun    = f"{year}/{year + 1}"
         semester = "ganjil" if sem_num == "1" else "genap"
 
         start_date = date.fromisoformat(start_str)
-        end_date   = start_date + timedelta(weeks=22)
+
+        # End date = hari sebelum semester berikutnya mulai (paling akurat)
+        # Fallback ke +22 minggu jika tidak ada semester berikutnya
+        if i + 1 < len(sorted_kodes):
+            next_start = date.fromisoformat(semester_starts[sorted_kodes[i + 1]])
+            end_date   = next_start - timedelta(days=1)
+        else:
+            end_date = start_date + timedelta(weeks=22)
 
         # FS weeks yang jatuh dalam rentang semester ini
         skip = sorted(
@@ -92,11 +103,12 @@ def parse_kalender_pdf(pdf_bytes: bytes) -> list[dict]:
         )
 
         result.append({
-            "kode_semester":       kode,
-            "tahun":               tahun,
-            "semester":            semester,
-            "semester_start_date": start_str,
-            "skip_dates":          skip,
+            "kode_semester":        kode,
+            "tahun":                tahun,
+            "semester":             semester,
+            "semester_start_date":  start_str,
+            "semester_end_date":    end_date.isoformat(),
+            "skip_dates":           skip,
         })
 
     return result

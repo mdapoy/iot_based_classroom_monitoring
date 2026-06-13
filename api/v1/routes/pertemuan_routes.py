@@ -89,7 +89,7 @@ def _get_or_create_config(ta_id: str) -> dict:
     """Ambil semester_config; buat kosong jika belum ada."""
     rows = (
         supabase.table("semester_config")
-        .select("id, semester_start_date, skip_dates")
+        .select("id, semester_start_date, semester_end_date, skip_dates")
         .eq("tahun_ajaran_id", ta_id)
         .limit(1)
         .execute()
@@ -146,6 +146,7 @@ def get_config(user: dict = Depends(optional_authenticated)):
     cfg = _get_or_create_config(ta["id"])
 
     start_str  = cfg.get("semester_start_date")
+    end_str    = cfg.get("semester_end_date")
     skip_dates = cfg.get("skip_dates") or []
 
     # Normalisasi skip_dates ke Senin
@@ -161,9 +162,10 @@ def get_config(user: dict = Depends(optional_authenticated)):
     minggu_berjalan = _compute_current_week(start_str, normalized_skip)
 
     return {
-        "tahun_ajaran_id":    ta["id"],
-        "tahun_ajaran":       f"{ta['tahun']} {ta['semester'].capitalize()}",
+        "tahun_ajaran_id":     ta["id"],
+        "tahun_ajaran":        f"{ta['tahun']} {ta['semester'].capitalize()}",
         "semester_start_date": start_str,
+        "semester_end_date":   end_str,
         "skip_dates":          normalized_skip,
         "minggu_berjalan":     minggu_berjalan,
     }
@@ -264,45 +266,71 @@ async def upload_kalender(
                    "Pastikan format PDF adalah Kalender Akademik Universitas Telkom.",
         )
 
-    # Tentukan semester aktif
-    ta = _get_active_ta()
-    tahun_parts = ta["tahun"].split("/")
-    year_first  = int(tahun_parts[0])
-    sem_num     = "1" if ta["semester"].lower() == "ganjil" else "2"
-    kode_aktif  = f"{year_first}-{sem_num}"
+    # Ambil semua tahun_ajaran dari DB untuk mapping kode → id
+    all_ta = (
+        supabase.table("tahun_ajaran")
+        .select("id, tahun, semester")
+        .execute()
+        .data or []
+    )
 
-    # Cari hasil parsing untuk semester aktif
-    target = next((s for s in parsed if s["kode_semester"] == kode_aktif), None)
+    # Buat lookup: "2025-2" → ta_id
+    def _kode_from_ta(ta_row: dict) -> str:
+        year_first = int(ta_row["tahun"].split("/")[0])
+        sem_num    = "1" if ta_row["semester"].lower() == "ganjil" else "2"
+        return f"{year_first}-{sem_num}"
 
-    if not target:
+    ta_lookup: dict[str, str] = {_kode_from_ta(t): t["id"] for t in all_ta}
+
+    # Simpan config untuk SEMUA semester yang ada match di DB
+    saved, skipped = [], []
+    for sem in parsed:
+        kode   = sem["kode_semester"]
+        ta_id  = ta_lookup.get(kode)
+        if not ta_id:
+            skipped.append(kode)
+            logger.warning(f"[PERTEMUAN] Tidak ada tahun_ajaran untuk kode={kode}, dilewati")
+            continue
+
+        payload = {
+            "semester_start_date": sem["semester_start_date"],
+            "semester_end_date":   sem.get("semester_end_date"),
+            "skip_dates":          sem["skip_dates"],
+        }
+        _upsert_config(ta_id, payload)
+        saved.append(kode)
+        logger.info(
+            f"[PERTEMUAN] Disimpan | kode={kode} ta={ta_id} "
+            f"start={sem['semester_start_date']} "
+            f"end={sem.get('semester_end_date')} "
+            f"skip={sem['skip_dates']}"
+        )
+
+    if not saved:
         available = [s["kode_semester"] for s in parsed]
         raise HTTPException(
             status_code=404,
             detail=(
-                f"Semester aktif '{kode_aktif}' tidak ditemukan dalam PDF. "
-                f"Semester yang tersedia: {available}"
+                f"Tidak ada semester dari PDF yang cocok dengan data tahun ajaran di DB. "
+                f"Semester di PDF: {available}"
             ),
         )
 
-    # Simpan ke DB
-    payload = {
-        "semester_start_date": target["semester_start_date"],
-        "skip_dates":          target["skip_dates"],
-    }
-    _upsert_config(ta["id"], payload)
-
-    logger.info(
-        f"[PERTEMUAN] Kalender di-upload | "
-        f"ta={ta['id']} kode={kode_aktif} "
-        f"start={target['semester_start_date']} "
-        f"skip={target['skip_dates']}"
-    )
+    # Tentukan semester aktif untuk response summary
+    ta_aktif   = _get_active_ta()
+    year_first = int(ta_aktif["tahun"].split("/")[0])
+    sem_num    = "1" if ta_aktif["semester"].lower() == "ganjil" else "2"
+    kode_aktif = f"{year_first}-{sem_num}"
+    target     = next((s for s in parsed if s["kode_semester"] == kode_aktif), parsed[0])
 
     return {
         "status":              "success",
-        "message":             f"Kalender semester {kode_aktif} berhasil diperbarui",
-        "kode_semester":       kode_aktif,
+        "message":             f"Berhasil menyimpan {len(saved)} semester dari PDF",
+        "semester_disimpan":   saved,
+        "semester_dilewati":   skipped,
+        "semester_aktif":      kode_aktif,
         "semester_start_date": target["semester_start_date"],
+        "semester_end_date":   target.get("semester_end_date"),
         "skip_dates":          target["skip_dates"],
         "semua_semester_parsed": [s["kode_semester"] for s in parsed],
     }
