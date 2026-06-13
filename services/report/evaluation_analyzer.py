@@ -9,7 +9,7 @@ _LLM_SEMAPHORE = asyncio.Semaphore(2)
 
 from repositories.supabase_client import supabase
 from services.summarizer.summarizer import client, MODELS, classify_gemini_error
-from services.rps.rps_service import SEMESTER_START_DATE, get_meeting_week
+from services.rps.rps_service import get_active_config, get_meeting_week
 from core.logger import logger
 from core.matkul_filter import is_matkul_blacklisted
 
@@ -36,8 +36,8 @@ PERIOD_LABELS: dict[str, str] = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _derive_semester_label() -> str:
-    """Derive label semester dari SEMESTER_START_DATE di env."""
-    start = date.fromisoformat(SEMESTER_START_DATE)
+    """Derive label semester dari semester_start_date di DB (atau env fallback)."""
+    start = date.fromisoformat(get_active_config()["semester_start_date"])
     if 2 <= start.month <= 7:
         return f"Genap {start.year - 1}/{start.year}"
     return f"Ganjil {start.year}/{start.year + 1}"
@@ -358,7 +358,7 @@ def get_matkul_info(kode_dosen: str) -> list[dict]:
             .select("id, kode_matkul, tanggal")
             .eq("kode_dosen", kode_dosen)
             .eq("status", "done")
-            .gte("tanggal", SEMESTER_START_DATE)
+            .gte("tanggal", get_active_config()["semester_start_date"])
             .in_("kode_matkul", kode_list)
             .execute()
         )
@@ -450,7 +450,7 @@ def check_prerequisites(kode_dosen: str, periode: str) -> dict:
             .select("id, kode_matkul, tanggal")
             .eq("kode_dosen", kode_dosen)
             .eq("status", "done")
-            .gte("tanggal", SEMESTER_START_DATE)
+            .gte("tanggal", get_active_config()["semester_start_date"])
             .execute()
         )
         all_reports = reports_res.data or []
@@ -547,7 +547,7 @@ async def build_eval_data(
         .select("id, kode_matkul, tanggal, kesesuaian_materi, kesesuaian_pct, status_waktu, kesesuaian_metode, method_score")
         .eq("kode_dosen", kode_dosen)
         .eq("status", "done")
-        .gte("tanggal", SEMESTER_START_DATE)
+        .gte("tanggal", get_active_config()["semester_start_date"])
         .execute()
     )
     all_reports = reports_res.data or []
