@@ -88,6 +88,9 @@ def get_meeting_week(tanggal_str: str) -> int:
     """
     cfg            = get_active_config()
     recording_date = date.fromisoformat(str(tanggal_str))
+    # Hari Minggu dianggap sudah masuk minggu berikutnya
+    if recording_date.weekday() == 6:
+        recording_date = recording_date + timedelta(days=1)
     semester_start = date.fromisoformat(cfg["semester_start_date"])
 
     # Normalisasi skip_dates ke set of Senin

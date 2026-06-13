@@ -111,7 +111,10 @@ def _compute_current_week(start_str: str | None, skip_dates: list) -> int | None
     if not start_str:
         return None
     try:
-        today        = date.today()
+        today = date.today()
+        # Hari Minggu dianggap sudah masuk minggu berikutnya
+        if today.weekday() == 6:
+            today = today + timedelta(days=1)
         start        = date.fromisoformat(start_str)
         skip_mondays = set()
         for s in skip_dates:
