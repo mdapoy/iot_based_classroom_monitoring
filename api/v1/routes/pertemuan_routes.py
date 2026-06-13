@@ -13,13 +13,14 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
-from api.v1.deps import require_admin
+from api.v1.deps import optional_authenticated
 from repositories.supabase_client import supabase
 from services.rps.rps_service import get_active_config, invalidate_config_cache
 from services.akademik.kalender_parser import parse_kalender_pdf
 from core.logger import logger
 
-router = APIRouter(prefix="/pertemuan", tags=["Pertemuan"])
+router        = APIRouter(prefix="/pertemuan",        tags=["Pertemuan"])
+router_legacy = APIRouter(prefix="/kalender-akademik", tags=["Pertemuan"])
 
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
 
@@ -140,7 +141,7 @@ def _compute_current_week(start_str: str | None, skip_dates: list) -> int | None
 # ── 1. GET config semester aktif ─────────────────────────────────────────────
 
 @router.get("/config")
-def get_config(user: dict = Depends(require_admin)):
+def get_config(user: dict = Depends(optional_authenticated)):
     ta  = _get_active_ta()
     cfg = _get_or_create_config(ta["id"])
 
@@ -171,7 +172,7 @@ def get_config(user: dict = Depends(require_admin)):
 # ── 2. POST tambah skip date ──────────────────────────────────────────────────
 
 @router.post("/skip-dates")
-def add_skip_date(body: SkipDateBody, user: dict = Depends(require_admin)):
+def add_skip_date(body: SkipDateBody, user: dict = Depends(optional_authenticated)):
     try:
         d = date.fromisoformat(body.tanggal)
     except ValueError:
@@ -205,7 +206,7 @@ def add_skip_date(body: SkipDateBody, user: dict = Depends(require_admin)):
 # ── 3. DELETE hapus skip date ─────────────────────────────────────────────────
 
 @router.delete("/skip-dates/{tanggal}")
-def delete_skip_date(tanggal: str, user: dict = Depends(require_admin)):
+def delete_skip_date(tanggal: str, user: dict = Depends(optional_authenticated)):
     try:
         d = date.fromisoformat(tanggal)
     except ValueError:
@@ -240,7 +241,7 @@ def delete_skip_date(tanggal: str, user: dict = Depends(require_admin)):
 @router.post("/upload-kalender")
 async def upload_kalender(
     file: UploadFile = File(...),
-    user: dict = Depends(require_admin),
+    user: dict = Depends(optional_authenticated),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Hanya file .pdf yang didukung")
@@ -305,3 +306,13 @@ async def upload_kalender(
         "skip_dates":          target["skip_dates"],
         "semua_semester_parsed": [s["kode_semester"] for s in parsed],
     }
+
+
+# ── Legacy alias: /kalender-akademik/upload-pdf → sama dengan /pertemuan/upload-kalender
+
+@router_legacy.post("/upload-pdf")
+async def upload_kalender_legacy(
+    file: UploadFile = File(...),
+    user: dict = Depends(optional_authenticated),
+):
+    return await upload_kalender(file=file, user=user)
