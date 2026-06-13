@@ -8,7 +8,7 @@ Endpoints:
   POST   /pertemuan/upload-kalender      → upload PDF kalender → auto-extract config
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -21,6 +21,8 @@ from core.logger import logger
 
 router        = APIRouter(prefix="/pertemuan",        tags=["Pertemuan"])
 router_legacy = APIRouter(prefix="/kalender-akademik", tags=["Pertemuan"])
+
+_WIB = timezone(timedelta(hours=7))
 
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
 
@@ -111,11 +113,11 @@ def _compute_current_week(start_str: str | None, skip_dates: list) -> int | None
     if not start_str:
         return None
     try:
-        today = date.today()
+        today = datetime.now(_WIB).date()
         # Hari Minggu dianggap sudah masuk minggu berikutnya
         if today.weekday() == 6:
             today = today + timedelta(days=1)
-        start        = date.fromisoformat(start_str)
+        start = date.fromisoformat(start_str)
         skip_mondays = set()
         for s in skip_dates:
             try:

@@ -1,6 +1,8 @@
 import os
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+_WIB = timezone(timedelta(hours=7))
 from dotenv import load_dotenv
 from repositories.supabase_client import supabase
 from core.logger import logger
