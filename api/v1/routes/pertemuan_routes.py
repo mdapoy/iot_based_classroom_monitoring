@@ -282,6 +282,25 @@ async def upload_kalender(
 
     ta_lookup: dict[str, str] = {_kode_from_ta(t): t["id"] for t in all_ta}
 
+    # Auto-create tahun_ajaran yang belum ada di DB
+    for sem in parsed:
+        kode = sem["kode_semester"]
+        if kode in ta_lookup:
+            continue
+        year_str, sem_num = kode.split("-")
+        year      = int(year_str)
+        tahun_str = f"{year}/{year + 1}"
+        sem_label = "ganjil" if sem_num == "1" else "genap"
+        res = (
+            supabase.table("tahun_ajaran")
+            .insert({"tahun": tahun_str, "semester": sem_label, "is_aktif": False})
+            .execute()
+        )
+        if res.data:
+            new_id = res.data[0]["id"]
+            ta_lookup[kode] = new_id
+            logger.info(f"[PERTEMUAN] Auto-create tahun_ajaran: {tahun_str} {sem_label} (id={new_id})")
+
     # Simpan config untuk SEMUA semester yang ada match di DB
     saved, skipped = [], []
     for sem in parsed:
@@ -289,7 +308,7 @@ async def upload_kalender(
         ta_id  = ta_lookup.get(kode)
         if not ta_id:
             skipped.append(kode)
-            logger.warning(f"[PERTEMUAN] Tidak ada tahun_ajaran untuk kode={kode}, dilewati")
+            logger.warning(f"[PERTEMUAN] Gagal create tahun_ajaran untuk kode={kode}, dilewati")
             continue
 
         payload = {
