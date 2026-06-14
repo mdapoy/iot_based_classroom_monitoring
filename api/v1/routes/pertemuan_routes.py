@@ -10,8 +10,9 @@ Endpoints:
 
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
+from typing import Optional
 
 from api.v1.deps import optional_authenticated
 from repositories.supabase_client import supabase
@@ -30,7 +31,8 @@ MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
 # ── Schema ────────────────────────────────────────────────────────────────────
 
 class SkipDateBody(BaseModel):
-    tanggal: str  # ISO "YYYY-MM-DD"
+    tanggal: str             # ISO "YYYY-MM-DD"
+    tahun_ajaran_id: Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,6 +54,26 @@ def _get_active_ta() -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail="Tidak ada tahun ajaran yang aktif")
     return rows[0]
+
+
+def _get_ta_by_id(ta_id: str) -> dict:
+    """Return row tahun_ajaran berdasarkan id, atau raise 404."""
+    rows = (
+        supabase.table("tahun_ajaran")
+        .select("id, tahun, semester, is_aktif")
+        .eq("id", ta_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Tahun ajaran tidak ditemukan")
+    return rows[0]
+
+
+def _resolve_ta(tahun_ajaran_id: Optional[str]) -> dict:
+    """Gunakan ta_id jika disediakan, fallback ke TA aktif."""
+    return _get_ta_by_id(tahun_ajaran_id) if tahun_ajaran_id else _get_active_ta()
 
 
 def _upsert_config(ta_id: str, payload: dict) -> dict:
@@ -146,8 +168,11 @@ def _compute_current_week(start_str: str | None, skip_dates: list) -> int | None
 # ── 1. GET config semester aktif ─────────────────────────────────────────────
 
 @router.get("/config")
-def get_config(user: dict = Depends(optional_authenticated)):
-    ta  = _get_active_ta()
+def get_config(
+    tahun_ajaran_id: Optional[str] = Query(None),
+    user: dict = Depends(optional_authenticated),
+):
+    ta  = _resolve_ta(tahun_ajaran_id)
     cfg = _get_or_create_config(ta["id"])
 
     start_str  = cfg.get("semester_start_date")
@@ -187,7 +212,7 @@ def add_skip_date(body: SkipDateBody, user: dict = Depends(optional_authenticate
 
     monday = _get_week_monday(d).isoformat()
 
-    ta  = _get_active_ta()
+    ta  = _resolve_ta(body.tahun_ajaran_id)
     cfg = _get_or_create_config(ta["id"])
 
     skip = list(cfg.get("skip_dates") or [])
@@ -213,7 +238,11 @@ def add_skip_date(body: SkipDateBody, user: dict = Depends(optional_authenticate
 # ── 3. DELETE hapus skip date ─────────────────────────────────────────────────
 
 @router.delete("/skip-dates/{tanggal}")
-def delete_skip_date(tanggal: str, user: dict = Depends(optional_authenticated)):
+def delete_skip_date(
+    tanggal: str,
+    tahun_ajaran_id: Optional[str] = Query(None),
+    user: dict = Depends(optional_authenticated),
+):
     try:
         d = date.fromisoformat(tanggal)
     except ValueError:
@@ -221,7 +250,7 @@ def delete_skip_date(tanggal: str, user: dict = Depends(optional_authenticated))
 
     monday = _get_week_monday(d).isoformat()
 
-    ta  = _get_active_ta()
+    ta  = _resolve_ta(tahun_ajaran_id)
     cfg = _get_or_create_config(ta["id"])
 
     skip = list(cfg.get("skip_dates") or [])
