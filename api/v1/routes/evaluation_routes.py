@@ -32,9 +32,8 @@ EXCLUDED_PERTEMUAN = {7, 16}
 
 # Bobot komponen % Performa Dosen (total 1.0)
 PERFORMA_WEIGHTS = {
-    "materi":    0.5,
-    "waktu":     0.3,
-    "kehadiran": 0.2,
+    "materi": 0.5,
+    "waktu":  0.5,
 }
 
 
@@ -584,8 +583,7 @@ def get_kelas_summary(
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TABEL DOSEN — % Performa
-# Performa = bobot-rata: Materi 50% · Waktu 30% · Kehadiran 20%
-# Komponen yang tidak ada → bobot dinormalisasi ulang
+# Performa = bobot-rata: Ketepatan Materi 50% · Ketepatan Durasi Mengajar 50%
 # ══════════════════════════════════════════════════════════════════════════════
 @router.get("/dosen-performa")
 def get_dosen_performa(
@@ -666,8 +664,6 @@ def get_dosen_performa(
             "materi_scores": [],
             "aktual_total":  0.0,
             "harapan_total": 0.0,
-            "hadir_tepat":   0,
-            "hadir_total":   0,
         })
 
     for r in reports:
@@ -695,26 +691,6 @@ def get_dosen_performa(
                 g["aktual_total"]  += _actual_minutes_from_stats(stats)
                 g["harapan_total"] += expected_per
 
-    # ── kehadiran dari rec_session ───────────────────────────────────────────
-    for s in (
-        supabase.table("rec_session")
-        .select("dosen_id, jadwal_id, kehadiran")
-        .execute()
-        .data or []
-    ):
-        if tahun_ajaran_id and s.get("jadwal_id") not in allowed_jadwal:
-            continue
-        kehadiran = s.get("kehadiran")
-        if not kehadiran:
-            continue
-        kode_dosen = kode_by_dosen_id.get(s.get("dosen_id"))
-        if not kode_dosen:
-            continue
-        g = _slot(kode_dosen)
-        g["hadir_total"] += 1
-        if kehadiran == "tepat_waktu":
-            g["hadir_tepat"] += 1
-
     # ── susun output + hitung performa ──────────────────────────────────────
     out = []
     for kode_dosen, g in agg.items():
@@ -726,16 +702,9 @@ def get_dosen_performa(
             if g["harapan_total"] > 0 else None
         )
 
-        kehadiran_pct = (
-            round(g["hadir_tepat"] / g["hadir_total"] * 100, 1)
-            if g["hadir_total"] > 0 else None
-        )
-
-        # Bobot-rata dengan normalisasi ulang untuk komponen yang ada
         comp = [
-            (PERFORMA_WEIGHTS["materi"],    materi_pct),
-            (PERFORMA_WEIGHTS["waktu"],     waktu_pct),
-            (PERFORMA_WEIGHTS["kehadiran"], kehadiran_pct),
+            (PERFORMA_WEIGHTS["materi"], materi_pct),
+            (PERFORMA_WEIGHTS["waktu"],  waktu_pct),
         ]
         avail = [(w, v) for w, v in comp if v is not None]
         if avail:
@@ -750,7 +719,6 @@ def get_dosen_performa(
             "performa":                 performa,
             "ketepatan_materi":         materi_pct,
             "ketepatan_waktu_mengajar": waktu_pct,
-            "kehadiran":                kehadiran_pct,
         })
 
     out.sort(key=lambda x: (x["performa"] is None, -(x["performa"] or 0)))
