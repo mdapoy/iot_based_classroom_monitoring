@@ -254,17 +254,29 @@ def compute_activity_summary(
         )
 
     base     = total_duration_sec or sum(totals.values()) or 1.0
-    dominant = max(totals, key=lambda k: totals[k])
+
+    # Dominant dari 4 kategori raw; DISKUSI dan TANYA_JAWAB digabung jadi satu label
+    _raw_dom = max(totals, key=lambda k: totals[k])
+    if _raw_dom in ("DISKUSI", "TANYA_JAWAB"):
+        dominant = "DISKUSI & TANYA JAWAB"
+    elif _raw_dom == "DIAM":
+        dominant = "DIAM"
+    else:
+        dominant = "CERAMAH"
+
+    int_sec = totals["DISKUSI"] + totals["TANYA_JAWAB"]
 
     return {
         "ceramah_sec":      round(totals["CERAMAH"], 1),
         "tanya_jawab_sec":  round(totals["TANYA_JAWAB"], 1),
         "diskusi_sec":      round(totals["DISKUSI"], 1),
         "diam_sec":         round(totals["DIAM"], 1),
+        "interaktif_sec":   round(int_sec, 1),
         "ceramah_pct":      round(totals["CERAMAH"]     / base * 100, 1),
         "tanya_jawab_pct":  round(totals["TANYA_JAWAB"] / base * 100, 1),
         "diskusi_pct":      round(totals["DISKUSI"]     / base * 100, 1),
         "diam_pct":         round(totals["DIAM"]        / base * 100, 1),
+        "interaktif_pct":   round(int_sec / base * 100, 1),
         "dominant":         dominant,
         "activity_timeline": activity_timeline,
     }

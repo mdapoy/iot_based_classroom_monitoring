@@ -155,13 +155,14 @@ def generate_combined_pdf(
 
     # ── Palette ──────────────────────────────────────────────────────
     C_PRI  = HexColor("#7B1C2E")   # Telkom dark red
-    C_GOLD = HexColor("#C8A84B")   # diskusi gold
+    C_GOLD = HexColor("#C8A84B")   # gold (reserved)
     C_GRN  = HexColor("#2E7D32")   # sesuai green
+    C_INT  = HexColor("#7B3FBE")   # diskusi & tanya jawab purple
     C_LBL  = HexColor("#999999")   # muted label
     C_BG   = HexColor("#F5F5F5")   # card background
     C_BDR  = HexColor("#DDDDDD")   # card border
     C_TXT  = HexColor("#1A1A1A")   # body text
-    C_BLU  = HexColor("#1976D2")   # tanya jawab blue
+    C_BLU  = HexColor("#1976D2")   # blue (reserved)
 
     # ── ParagraphStyle factory ───────────────────────────────────────
     _idx = [0]
@@ -307,18 +308,20 @@ def generate_combined_pdf(
     def _pct(k): return int(act.get(k, 0) or 0)
     def _min(k): return round((act.get(k, 0) or 0) / 60)
 
-    cer_pct = _pct("ceramah_pct");     dis_pct = _pct("diskusi_pct")
-    tny_pct = _pct("tanya_jawab_pct"); dim_pct = _pct("diam_pct")
-    cer_min = _min("ceramah_sec");     dis_min = _min("diskusi_sec")
-    tny_min = _min("tanya_jawab_sec"); dim_min = _min("diam_sec")
-    tot_min = cer_min + dis_min + tny_min + dim_min
+    cer_pct = _pct("ceramah_pct"); dim_pct = _pct("diam_pct")
+    int_pct = _pct("interaktif_pct") or (_pct("diskusi_pct") + _pct("tanya_jawab_pct"))
+    cer_min = _min("ceramah_sec");  dim_min = _min("diam_sec")
+    int_min = _min("interaktif_sec") or (_min("diskusi_sec") + _min("tanya_jawab_sec"))
+    tot_min = cer_min + int_min + dim_min
     dominant = (act.get("dominant") or "CERAMAH").upper()
+    # Normalisasi dominant lama yang masih menyimpan label terpisah
+    if dominant in ("DISKUSI", "TANYA_JAWAB", "TANYA JAWAB"):
+        dominant = "DISKUSI & TANYA JAWAB"
 
     dom_c = {
-        "CERAMAH":    C_PRI,
-        "DISKUSI":    C_GOLD,
-        "TANYA JAWAB": C_BLU,
-        "DIAM":       HexColor("#757575"),
+        "CERAMAH":              C_PRI,
+        "DISKUSI & TANYA JAWAB": C_INT,
+        "DIAM":                 HexColor("#757575"),
     }.get(dominant, C_PRI)
 
     is_sesuai = "sesuai" in kesesuaian.lower() and "tidak" not in kesesuaian.lower()
@@ -528,10 +531,9 @@ def generate_combined_pdf(
 
     # Progress bars
     for lbl, pct, col in [
-        ("Ceramah",     cer_pct, C_PRI),
-        ("Diskusi",     dis_pct, C_GOLD),
-        ("Tanya Jawab", tny_pct, C_BLU),
-        ("Diam",        dim_pct, HexColor("#BDBDBD")),
+        ("Ceramah",               cer_pct, C_PRI),
+        ("Diskusi & Tanya Jawab", int_pct, C_INT),
+        ("Diam",                  dim_pct, HexColor("#BDBDBD")),
     ]:
         y = _pbar(c, lbl, pct, col, y)
     y -= 8
@@ -545,10 +547,10 @@ def generate_combined_pdf(
     c.rect(ML, y - TH, CW, TH, fill=1, stroke=1)
 
     for i, (tl, tv, tc, tb) in enumerate([
-        ("TOTAL DURASI",       f"{tot_min} Menit",           C_TXT,  True),
-        ("CERAMAH",            f"{cer_min} Menit",           C_PRI,  cer_pct > 0),
-        ("DISKUSI",            f"{dis_min} Menit",           C_GOLD, dis_pct > 0),
-        ("TANYA JAWAB / DIAM", f"{tny_min + dim_min} Menit", C_TXT,  False),
+        ("TOTAL DURASI",          f"{tot_min} Menit", C_TXT,  True),
+        ("CERAMAH",               f"{cer_min} Menit", C_PRI,  cer_pct > 0),
+        ("DISKUSI & TANYA JAWAB", f"{int_min} Menit", C_INT,  int_pct > 0),
+        ("DIAM",                  f"{dim_min} Menit", C_TXT,  False),
     ]):
         cx = ML + i * CW4 + 8
         if i > 0:
