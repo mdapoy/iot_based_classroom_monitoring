@@ -1,8 +1,18 @@
 from repositories.supabase_client import supabase
 import mimetypes
 
-BUCKET = "transcripts"
-BUCKET_SUMMARY = "summary"
+BUCKET            = "transcripts"
+BUCKET_SUMMARY    = "summary"
+BUCKET_EVALUATION = "evaluasi"
+
+# Signed URL berlaku 1 jam — cukup untuk sesi baca PDF di FE
+_SIGNED_EXPIRES = 3600
+
+
+def _signed_url(bucket: str, path: str) -> str:
+    res = supabase.storage.from_(bucket).create_signed_url(path, _SIGNED_EXPIRES)
+    return res["signedURL"]
+
 
 def upload_transcript(filename: str, content: str):
     supabase.storage.from_(BUCKET).upload(
@@ -10,44 +20,40 @@ def upload_transcript(filename: str, content: str):
         content.encode("utf-8"),
         {"content-type": "text/plain"}
     )
-
     return filename
+
 
 def download_transcript(path: str):
     res = supabase.storage.from_(BUCKET).download(path)
     return res.decode("utf-8")
 
+
 def upload_summary(local_path, storage_path):
     mime_type, _ = mimetypes.guess_type(local_path)
-
     with open(local_path, "rb") as f:
-        supabase.storage.from_("summary").upload(
+        supabase.storage.from_(BUCKET_SUMMARY).upload(
             storage_path,
             f,
-            {
-                "content-type": mime_type or "application/octet-stream"
-            }
+            {"content-type": mime_type or "application/octet-stream"}
         )
+    return _signed_url(BUCKET_SUMMARY, storage_path)
 
-    return supabase.storage.from_("summary").get_public_url(storage_path)
 
-def get_public_summary_url(filename: str):
-    return supabase.storage.from_(BUCKET_SUMMARY).get_public_url(filename)
+def get_public_summary_url(filename: str) -> str:
+    return _signed_url(BUCKET_SUMMARY, filename)
 
-BUCKET_EVALUATION = "evaluasi"
 
 def upload_evaluation(local_path: str, storage_path: str) -> str:
     """Upload PDF laporan evaluasi ke bucket 'evaluasi'."""
     mime_type, _ = mimetypes.guess_type(local_path)
-
     with open(local_path, "rb") as f:
         supabase.storage.from_(BUCKET_EVALUATION).upload(
             storage_path,
             f,
             {"content-type": mime_type or "application/pdf"},
         )
+    return _signed_url(BUCKET_EVALUATION, storage_path)
 
-    return supabase.storage.from_(BUCKET_EVALUATION).get_public_url(storage_path)
 
 def get_public_evaluation_url(filename: str) -> str:
-    return supabase.storage.from_(BUCKET_EVALUATION).get_public_url(filename)
+    return _signed_url(BUCKET_EVALUATION, filename)

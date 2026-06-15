@@ -168,6 +168,7 @@ ATURAN WAJIB:
 - Setiap poin harus mencerminkan kegiatan nyata di kelas berdasarkan transkrip.
 - DETAIL: paragraf mengalir tanpa poin-poin, tanpa penomoran, tanpa simbol markdown (**, *, #, -).
 - Jika perlu menyebut urutan di detail, gunakan: "pertama", "selanjutnya", "kemudian", "terakhir".
+- Jika ada persamaan atau rumus matematika, wajib ditulis menggunakan simbol matematika (=, +, −, ×, ÷, ², √, ≥, ≤, ≠, Σ, π, ∞, dll), bukan dieja dalam huruf (bukan "dikali", "sama dengan", "sigma", dsb). Berlaku untuk POIN maupun DETAIL.
 - Bahasa Indonesia yang jelas dan mudah dipahami.
 - Fokus pada konteks pembelajaran {nama_matkul}.
 
