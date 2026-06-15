@@ -305,7 +305,7 @@ def generate_combined_pdf(
     method_score = analysis.get("method_score")   # float|None
     penj_met     = analysis.get("penjelasan_metode",    "-")
 
-    def _pct(k): return int(act.get(k, 0) or 0)
+    def _pct(k): return round(act.get(k, 0) or 0)
     def _min(k): return round((act.get(k, 0) or 0) / 60)
 
     cer_pct = _pct("ceramah_pct"); dim_pct = _pct("diam_pct")
