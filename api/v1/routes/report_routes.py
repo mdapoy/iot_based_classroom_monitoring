@@ -94,10 +94,10 @@ async def get_summary(report_id: int, user: dict = Depends(optional_authenticate
 
     file_path = summary["file_path"]
 
-    # 🔥 generate ulang public URL
+    # generate signed URL (private bucket, valid 1 jam)
     public_url = supabase.storage \
         .from_("summary") \
-        .get_public_url(file_path)
+        .create_signed_url(file_path, 3600)["signedURL"]
 
     # 🧪 LOG PERBANDINGAN
     logger.info(f"[DB] file_path: {file_path}")

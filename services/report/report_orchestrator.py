@@ -46,7 +46,7 @@ async def generate_report(data: dict):
 
                 public_url = supabase.storage \
                     .from_("summary") \
-                    .get_public_url(existing_summary["file_path"])
+                    .create_signed_url(existing_summary["file_path"], 3600)["signedURL"]
 
                 return {
                     "status": "success",
