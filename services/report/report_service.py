@@ -11,11 +11,23 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.colors import HexColor, white
 from reportlab.lib.enums import TA_JUSTIFY
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 _LOGO_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..", "..", "assets", "klaktify-icon.png"
 )
+
+# ── Font registrasi (DejaVu Sans — support Unicode subskrip & simbol matematika) ─
+_FONT_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "fonts")
+_FONT      = "DejaVuSans"
+_FONT_BOLD = "DejaVuSans-Bold"
+_FONT_ITAL = "DejaVuSans-Oblique"
+
+pdfmetrics.registerFont(TTFont(_FONT,      os.path.join(_FONT_DIR, "DejaVuSans.ttf")))
+pdfmetrics.registerFont(TTFont(_FONT_BOLD, os.path.join(_FONT_DIR, "DejaVuSans-Bold.ttf")))
+pdfmetrics.registerFont(TTFont(_FONT_ITAL, os.path.join(_FONT_DIR, "DejaVuSans-Oblique.ttf")))
 
 TABLE = "reports"
 
@@ -155,7 +167,7 @@ def generate_combined_pdf(
     _idx = [0]
     def _ps(**kw):
         _idx[0] += 1
-        d = dict(name=f"_clactify_{_idx[0]}", fontName="Helvetica",
+        d = dict(name=f"_clactify_{_idx[0]}", fontName=_FONT,
                  fontSize=9, leading=13, textColor=C_TXT,
                  spaceAfter=0, spaceBefore=0)
         d.update(kw)
@@ -181,10 +193,10 @@ def generate_combined_pdf(
         c.setFillColor(white)
         c.rect(bx, by, bs, bs, fill=1, stroke=0)
         c.setFillColor(C_PRI)
-        c.setFont("Helvetica-Bold", 9)
+        c.setFont(_FONT_BOLD, 9)
         c.drawCentredString(bx + bs / 2, by + 4, badge)
         c.setFillColor(white)
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont(_FONT_BOLD, 10)
         c.drawString(bx + bs + 8, y - H + 9, title)
         return y - H - 6
 
@@ -204,11 +216,11 @@ def generate_combined_pdf(
                 c.setStrokeColor(C_BDR)
                 c.line(ML + i * cw4, y - 3, ML + i * cw4, y - H + 3)
             c.setFillColor(C_LBL)
-            c.setFont("Helvetica", 7)
+            c.setFont(_FONT, 7)
             c.drawString(cx, y - 13, h)
             fc = (C_GRN if "tepat" in v.lower() else C_PRI) if h == "STATUS WAKTU" else C_TXT
             c.setFillColor(fc)
-            c.setFont("Helvetica-Bold", 11)
+            c.setFont(_FONT_BOLD, 11)
             c.drawString(cx, y - 34, v)
         return y - H
 
@@ -218,7 +230,7 @@ def generate_combined_pdf(
         c.setFillColor(color)
         c.rect(x, y + 2, SZ, SZ, fill=1, stroke=0)
         c.setFillColor(color)
-        c.setFont("Helvetica-Bold", fsize)
+        c.setFont(_FONT_BOLD, fsize)
         c.drawString(x + SZ + 5, y, text)
 
     # ── Helper: single progress bar row ─────────────────────────────
@@ -227,7 +239,7 @@ def generate_combined_pdf(
         bx = ML + LW
         bw = CW - LW - 28
         c.setFillColor(C_TXT)
-        c.setFont("Helvetica", 9)
+        c.setFont(_FONT, 9)
         c.drawString(ML, y, label)
         c.setFillColor(HexColor("#EBEBEB"))
         c.rect(bx, y - bh + 2, bw, bh, fill=1, stroke=0)
@@ -235,7 +247,7 @@ def generate_combined_pdf(
             c.setFillColor(color)
             c.rect(bx, y - bh + 2, bw * pct / 100, bh, fill=1, stroke=0)
         c.setFillColor(C_TXT)
-        c.setFont("Helvetica-Bold", 9)
+        c.setFont(_FONT_BOLD, 9)
         c.drawRightString(MR, y, f"{pct}%")
         return y - bh - 5
 
@@ -259,7 +271,7 @@ def generate_combined_pdf(
     # ── Helper: footer ───────────────────────────────────────────────
     def _footer(c, pg, tot):
         c.setFillColor(C_LBL)
-        c.setFont("Helvetica", 7.5)
+        c.setFont(_FONT, 7.5)
         c.drawString(
             ML, 28,
             "Laporan ini dibuat secara otomatis oleh sistem Clactify -- Telkom University"
@@ -323,10 +335,10 @@ def generate_combined_pdf(
     LOGO_H = 13
     LOGO_W = 13
     c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(_FONT_BOLD, 9)
     c.drawString(ML, y, "UNIVERSITAS TELKOM")
     hdr_txt   = "CLACTIFY -- CLASS ACTIVITY IDENTIFY"
-    hdr_txt_w = c.stringWidth(hdr_txt, "Helvetica", 8)
+    hdr_txt_w = c.stringWidth(hdr_txt, _FONT, 8)
     if os.path.exists(_LOGO_PATH):
         c.drawImage(
             _LOGO_PATH,
@@ -335,13 +347,13 @@ def generate_combined_pdf(
             preserveAspectRatio=True, mask="auto"
         )
     c.setFillColor(C_LBL)
-    c.setFont("Helvetica", 8)
+    c.setFont(_FONT, 8)
     c.drawRightString(MR, y, hdr_txt)
     y -= 32
 
     # Title
     c.setFillColor(C_TXT)
-    c.setFont("Helvetica-Bold", 24)
+    c.setFont(_FONT_BOLD, 24)
     c.drawString(ML, y, "LAPORAN IDENTIFIKASI PEMBELAJARAN")
     y -= 22
 
@@ -350,7 +362,7 @@ def generate_combined_pdf(
     kls_str = f"  |  {kode_kelas}" if kode_kelas else ""
     kd_str  = f"  |  {kode_dosen}" if kode_dosen else ""
     c.setFillColor(HexColor("#666666"))
-    c.setFont("Helvetica", 8.5)
+    c.setFont(_FONT, 8.5)
     c.drawString(
         ML, y,
         f"Analisis Kesesuaian & Aktivitas Kelas  |  {nm_str}"
@@ -378,7 +390,7 @@ def generate_combined_pdf(
 
     # Sub-header: Ringkasan
     c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(_FONT_BOLD, 10)
     c.drawString(ML, y, "Ringkasan Materi Perkuliahan")
     y -= 12
 
@@ -411,7 +423,7 @@ def generate_combined_pdf(
 
     # Sub-header: Detail
     c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(_FONT_BOLD, 10)
     c.drawString(ML, y, "Detail Materi Perkuliahan")
     y -= 12
 
@@ -430,13 +442,13 @@ def generate_combined_pdf(
 
     # Running header — text
     c.setFillColor(C_TXT)
-    c.setFont("Helvetica-Bold", 7.5)
+    c.setFont(_FONT_BOLD, 7.5)
     c.drawString(
         ML, y - 14,
         f"LAPORAN IDENTIFIKASI PEMBELAJARAN  |  {nama_matkul.upper()}  --  PERTEMUAN KE-{pertemuan_ke}"
     )
     p2_txt   = "CLACTIFY"
-    p2_txt_w = c.stringWidth(p2_txt, "Helvetica-Bold", 7.5)
+    p2_txt_w = c.stringWidth(p2_txt, _FONT_BOLD, 7.5)
     if os.path.exists(_LOGO_PATH):
         c.drawImage(
             _LOGO_PATH,
@@ -445,7 +457,7 @@ def generate_combined_pdf(
             preserveAspectRatio=True, mask="auto"
         )
     c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 7.5)
+    c.setFont(_FONT_BOLD, 7.5)
     c.drawRightString(MR, y - 14, p2_txt)
     y -= 26
 
@@ -467,13 +479,13 @@ def generate_combined_pdf(
             c.rect(cx, cy - GH, HW, GH, fill=1, stroke=1)
 
     # Cell: top-left — Materi RPS
-    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.setFillColor(C_LBL); c.setFont(_FONT, 7)
     c.drawString(ML + 8, GT - 13, "MATERI PEMBELAJARAN RPS")
     _para(c, materi_rps, _ps(fontSize=8.5, leading=12),
           ML + 8, GT - 18, HW - 16)
 
     # Cell: top-right — Kesesuaian materi (angka % jika tersedia, teks jika data lama)
-    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.setFillColor(C_LBL); c.setFont(_FONT, 7)
     c.drawString(ML + HW + 8, GT - 13, "KESESUAIAN MATERI")
     if kesesuaian_pct is not None:
         pct_f    = float(kesesuaian_pct)
@@ -484,13 +496,13 @@ def generate_combined_pdf(
                     C_GRN if is_sesuai else C_PRI, kesesuaian.upper())
 
     # Cell: bottom-left — Pertemuan terdeteksi
-    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.setFillColor(C_LBL); c.setFont(_FONT, 7)
     c.drawString(ML + 8, GT - GH - 13, "PERTEMUAN TERDETEKSI")
-    c.setFillColor(C_TXT); c.setFont("Helvetica-Bold", 12)
+    c.setFillColor(C_TXT); c.setFont(_FONT_BOLD, 12)
     c.drawString(ML + 8, GT - GH - 35, f"Ke-{ptm_det} ({_ordinal(ptm_det)})")
 
     # Cell: bottom-right — Status waktu
-    c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+    c.setFillColor(C_LBL); c.setFont(_FONT, 7)
     c.drawString(ML + HW + 8, GT - GH - 13, "STATUS WAKTU")
     _badge_text(c, ML + HW + 8, GT - GH - 35,
                 C_GRN if is_tepat else C_PRI, status_wkt.upper())
@@ -507,10 +519,10 @@ def generate_combined_pdf(
 
     # Dominant activity subtitle
     dom_label = "AKTIVITAS DOMINAN  "
-    dw = c.stringWidth(dom_label, "Helvetica", 9)
-    c.setFillColor(C_LBL); c.setFont("Helvetica", 9)
+    dw = c.stringWidth(dom_label, _FONT, 9)
+    c.setFillColor(C_LBL); c.setFont(_FONT, 9)
     c.drawString(ML, y, dom_label)
-    c.setFillColor(dom_c); c.setFont("Helvetica-Bold", 9)
+    c.setFillColor(dom_c); c.setFont(_FONT_BOLD, 9)
     c.drawString(ML + dw, y, dominant)
     y -= 18
 
@@ -542,10 +554,10 @@ def generate_combined_pdf(
         if i > 0:
             c.setStrokeColor(C_BDR)
             c.line(ML + i * CW4, y - 3, ML + i * CW4, y - TH + 3)
-        c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+        c.setFillColor(C_LBL); c.setFont(_FONT, 7)
         c.drawString(cx, y - 13, tl)
         c.setFillColor(tc)
-        c.setFont("Helvetica-Bold" if tb else "Helvetica", 12 if tb else 10)
+        c.setFont(_FONT_BOLD if tb else _FONT, 12 if tb else 10)
         c.drawString(cx, y - 34, tv)
 
     y -= TH + 14
@@ -578,12 +590,12 @@ def generate_combined_pdf(
         c.setStrokeColor(C_BDR)
         c.setLineWidth(0.5)
         c.rect(cx, G3T - GH3, CW3, GH3, fill=1, stroke=1)
-        c.setFillColor(C_LBL); c.setFont("Helvetica", 7)
+        c.setFillColor(C_LBL); c.setFont(_FONT, 7)
         c.drawString(cx + 8, G3T - 13, lbl)
         if vtype in ("text", "bold"):
             st = _ps(
                 fontSize=8.5, leading=12,
-                fontName="Helvetica-Bold" if vtype == "bold" else "Helvetica"
+                fontName=_FONT_BOLD if vtype == "bold" else _FONT
             )
             _para(c, val, st, cx + 8, G3T - 18, CW3 - 16)
         else:

@@ -17,6 +17,15 @@ from reportlab.lib.colors import HexColor, white
 from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT
 from reportlab.platypus import Paragraph
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+_FONT_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "fonts")
+_FONT      = "DejaVuSans"
+_FONT_BOLD = "DejaVuSans-Bold"
+
+pdfmetrics.registerFont(TTFont(_FONT,      os.path.join(_FONT_DIR, "DejaVuSans.ttf")))
+pdfmetrics.registerFont(TTFont(_FONT_BOLD, os.path.join(_FONT_DIR, "DejaVuSans-Bold.ttf")))
 
 from core.logger import logger
 
@@ -55,7 +64,7 @@ def _ps(**kw) -> ParagraphStyle:
     _ps_idx[0] += 1
     d = dict(
         name=f"_eval_{_ps_idx[0]}",
-        fontName="Helvetica",
+        fontName=_FONT,
         fontSize=9,
         leading=13,
         textColor=C_TXT,
@@ -91,10 +100,10 @@ def _sec_hdr(c, badge: str, title: str, y: float) -> float:
     c.setFillColor(white)
     c.rect(bx, by, BS, BS, fill=1, stroke=0)
     c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(_FONT_BOLD, 9)
     c.drawCentredString(bx + BS / 2, by + 4, badge)
     c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(_FONT_BOLD, 10)
     c.drawString(bx + BS + 8, y - H + 9, title)
     return y - H - 6
 
@@ -105,7 +114,7 @@ def _sec_hdr(c, badge: str, title: str, y: float) -> float:
 
 def _footer(c, pg: int, tot: int) -> None:
     c.setFillColor(C_LBL)
-    c.setFont("Helvetica", 7.5)
+    c.setFont(_FONT, 7.5)
     c.drawString(
         ML, 28,
         "Laporan ini dibuat secara otomatis oleh sistem Clactify -- Telkom University"
@@ -126,10 +135,10 @@ def _running_hdr(c, nama_dosen: str) -> float:
     y -= 4
     label = f"LAPORAN EVALUASI DOSEN  |  {nama_dosen.upper()}"
     c.setFillColor(C_TXT)
-    c.setFont("Helvetica-Bold", 7.5)
+    c.setFont(_FONT_BOLD, 7.5)
     c.drawString(ML, y - 14, label)
     logo_label = "CLACTIFY"
-    lw = c.stringWidth(logo_label, "Helvetica-Bold", 7.5)
+    lw = c.stringWidth(logo_label, _FONT_BOLD, 7.5)
     if os.path.exists(_LOGO_PATH):
         c.drawImage(
             _LOGO_PATH,
@@ -138,7 +147,7 @@ def _running_hdr(c, nama_dosen: str) -> float:
             preserveAspectRatio=True, mask="auto",
         )
     c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 7.5)
+    c.setFont(_FONT_BOLD, 7.5)
     c.drawRightString(MR, y - 14, logo_label)
     return y - 30
 
@@ -179,12 +188,12 @@ def _info_card_4(
             c.setLineWidth(0.5)
             c.line(ML + i * CW4, y - 5, ML + i * CW4, y - H + 5)
         c.setFillColor(C_LBL)
-        c.setFont("Helvetica", 7)
+        c.setFont(_FONT, 7)
         c.drawString(cx, y - 13, label)          # was y - 16
         # Value: Paragraph agar bisa wrap; jarak dari label diperbesar
         p = Paragraph(
             str(val or "-"),
-            _ps(fontName="Helvetica-Bold", fontSize=9, leading=13, textColor=C_TXT)
+            _ps(fontName=_FONT_BOLD, fontSize=9, leading=13, textColor=C_TXT)
         )
         _, th = p.wrap(CW4 - 16, 9999)
         p.drawOn(c, cx, y - 28 - th)             # top value di y-28 (was y-20)
@@ -228,20 +237,20 @@ def _matkul_card(
             c.setLineWidth(0.5)
             c.line(ML + i * CW4, y - 5, ML + i * CW4, y - H + 5)
         c.setFillColor(C_LBL)
-        c.setFont("Helvetica", 7)
+        c.setFont(_FONT, 7)
         c.drawString(cx, y - 14, lbl)
 
         if i == 0:
             # MATA KULIAH: Paragraph agar nama panjang bisa wrap ke baris bawah
             p_val = Paragraph(
                 str(val or "-"),
-                _ps(fontName="Helvetica-Bold", fontSize=10, leading=13, textColor=vc)
+                _ps(fontName=_FONT_BOLD, fontSize=10, leading=13, textColor=vc)
             )
             _, th = p_val.wrap(CW4 - 16, 9999)
             p_val.drawOn(c, cx, y - 30 - th)    # top value di y-30
         else:
             c.setFillColor(vc)
-            c.setFont("Helvetica-Bold", 11)
+            c.setFont(_FONT_BOLD, 11)
             c.drawString(cx, y - 38, val)
 
     return y - H
@@ -330,7 +339,7 @@ def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
     x = ML
     for h, w in zip(_HDR_A, _COL_A):
         c.setFillColor(white)
-        c.setFont("Helvetica-Bold", 7.5)
+        c.setFont(_FONT_BOLD, 7.5)
         c.drawString(x + 5, y - HDR_H + 8, h)
         x += w
     y -= HDR_H
@@ -356,7 +365,7 @@ def _table_ringkasan(c, per_matkul: list[dict], y: float) -> float:
         x = ML
         for (text, color, bold), w in zip(cells, _COL_A):
             c.setFillColor(color)
-            c.setFont("Helvetica-Bold" if bold else "Helvetica", 7.5)
+            c.setFont(_FONT_BOLD if bold else _FONT, 7.5)
             c.drawString(x + 5, y - ROW_H + 7, text)
             x += w
 
@@ -395,7 +404,7 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
     x = ML
     for h, w in zip(_HDR_B, _COL_B):
         c.setFillColor(white)
-        c.setFont("Helvetica-Bold", 7)
+        c.setFont(_FONT_BOLD, 7)
         c.drawString(x + 4, y - HDR_H + 8, h)
         x += w
     y -= HDR_H
@@ -411,7 +420,7 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
 
         topik_st = _ps(fontSize=7, leading=10, textColor=C_TXT)
         akt_st   = _ps(fontSize=7, leading=10, textColor=C_TXT)
-        kt_st    = _ps(fontSize=7, leading=10, fontName="Helvetica-Bold",
+        kt_st    = _ps(fontSize=7, leading=10, fontName=_FONT_BOLD,
                        textColor=_kes_color(kes_t_txt))
 
         p_topik = Paragraph(topik_txt, topik_st)
@@ -445,7 +454,7 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
         # ── Kolom 0: Ke- — plain, vertically centered ────────────────────────
         x = ML
         c.setFillColor(C_TXT)
-        c.setFont("Helvetica", 7)
+        c.setFont(_FONT, 7)
         c.drawString(x + 4, y - mid - 2, f"Ke-{p.get('pertemuan_ke', '-')}")
         x += _COL_B[0]
 
@@ -455,19 +464,19 @@ def _table_pertemuan(c, pertemuan_list: list[dict], y: float, check_fn) -> float
 
         # ── Kolom 2: Kes. Materi — plain, vertically centered ────────────────
         c.setFillColor(_kes_color(kes_m))
-        c.setFont("Helvetica-Bold", 7)
+        c.setFont(_FONT_BOLD, 7)
         c.drawString(x + 4, y - mid - 2, kes_m)
         x += _COL_B[2]
 
         # ── Kolom 3: Durasi — plain, vertically centered ─────────────────────
         c.setFillColor(C_TXT)
-        c.setFont("Helvetica", 7)
+        c.setFont(_FONT, 7)
         c.drawString(x + 4, y - mid - 2, dur)
         x += _COL_B[3]
 
         # ── Kolom 4: Status Waktu — plain, vertically centered ───────────────
         c.setFillColor(_waktu_color(stat))
-        c.setFont("Helvetica-Bold", 7)
+        c.setFont(_FONT_BOLD, 7)
         c.drawString(x + 4, y - mid - 2, stat)
         x += _COL_B[4]
 
@@ -545,10 +554,10 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
     # ── Main header row ───────────────────────────────────────────────────────
     LOGO_H = LOGO_W = 13
     c.setFillColor(C_PRI)
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(_FONT_BOLD, 9)
     c.drawString(ML, y, "UNIVERSITAS TELKOM")
     hdr_txt   = "CLACTIFY -- CLASS ACTIVITY IDENTIFY"
-    hdr_txt_w = c.stringWidth(hdr_txt, "Helvetica", 8)
+    hdr_txt_w = c.stringWidth(hdr_txt, _FONT, 8)
     if os.path.exists(_LOGO_PATH):
         c.drawImage(
             _LOGO_PATH,
@@ -557,19 +566,19 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
             preserveAspectRatio=True, mask="auto",
         )
     c.setFillColor(C_LBL)
-    c.setFont("Helvetica", 8)
+    c.setFont(_FONT, 8)
     c.drawRightString(MR, y, hdr_txt)
     y -= 32
 
     # ── Judul ─────────────────────────────────────────────────────────────────
     c.setFillColor(C_TXT)
-    c.setFont("Helvetica-Bold", 24)
+    c.setFont(_FONT_BOLD, 24)
     c.drawString(ML, y, "LAPORAN EVALUASI DOSEN")
     y -= 20
 
     # Subtitle: "Rekap Kinerja Mengajar · {prodi} · {semester_label}"
     c.setFillColor(HexColor("#666666"))
-    c.setFont("Helvetica", 8.5)
+    c.setFont(_FONT, 8.5)
     c.drawString(ML, y, f"Rekap Kinerja Mengajar  ·  {prodi}  ·  {semester_label}")
     y -= 10
 
@@ -589,7 +598,7 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
 
     # Sub-header tabel
     c.setFillColor(C_TXT)
-    c.setFont("Helvetica-Bold", 9.5)
+    c.setFont(_FONT_BOLD, 9.5)
     c.drawString(ML, y, "Rekapitulasi Kinerja per Mata Kuliah")
     y -= 10
 
@@ -629,7 +638,7 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
 
         # Sub-header tabel
         c.setFillColor(C_TXT)
-        c.setFont("Helvetica-Bold", 9.5)
+        c.setFont(_FONT_BOLD, 9.5)
         c.drawString(ML, y, f"{badge}.1  Ringkasan Per Pertemuan")
         y -= 8
 
@@ -656,7 +665,7 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
 
         # Sub-header kesimpulan
         c.setFillColor(C_TXT)
-        c.setFont("Helvetica-Bold", 9.5)
+        c.setFont(_FONT_BOLD, 9.5)
         c.drawString(ML, y, f"{badge}.2  Kesimpulan Mata Kuliah")
         y -= 8
 
@@ -692,7 +701,7 @@ def generate_evaluation_pdf(eval_data: dict, output_path: str) -> str:
     c.line(ML, y, ML + sig_w, y)
     y -= 14
     c.setFillColor(C_LBL)
-    c.setFont("Helvetica", 8)
+    c.setFont(_FONT, 8)
     c.drawString(ML, y, "Diketahui oleh,")
 
     _footer(c, pg[0], total_pages)
