@@ -1,6 +1,8 @@
+import time
 import pandas as pd
 from repositories.supabase_client import supabase
 from repositories.cache import invalidate_jadwal_cache
+from core.logger import logger
 from typing import Optional
 
 REQUIRED_COLUMNS = {"hari", "kode_mata_kuliah", "nama_mata_kuliah", "dosen", "kelas", "shift"}
@@ -8,12 +10,19 @@ REQUIRED_COLUMNS = {"hari", "kode_mata_kuliah", "nama_mata_kuliah", "dosen", "ke
 
 def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
 
-    df = pd.read_excel(file, engine="openpyxl")
+    # ── STEP 1: Parse Excel ───────────────────────────────────────────────────
+    logger.info(f"[XLSX] [1/4] Membaca Excel...")
+    t1 = time.time()
 
-    # Normalize nama kolom: lowercase + spasi → underscore
+    df = pd.read_excel(file, engine="openpyxl")
     df.columns = df.columns.str.lower().str.replace(" ", "_")
 
-    # Validasi kolom wajib
+    logger.info(f"[XLSX] [1/4] SELESAI | total_baris={len(df)} | waktu={time.time() - t1:.2f}s")
+
+    # ── STEP 2: Validasi kolom ────────────────────────────────────────────────
+    logger.info(f"[XLSX] [2/4] Validasi kolom...")
+    t2 = time.time()
+
     missing = REQUIRED_COLUMNS - set(df.columns)
     if missing:
         raise ValueError(
@@ -36,7 +45,12 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
 
     data = df.to_dict(orient="records")
 
-    # Cek duplikat sebelum INSERT
+    logger.info(f"[XLSX] [2/4] SELESAI | kolom OK | waktu={time.time() - t2:.2f}s")
+
+    # ── STEP 3: Cek duplikat ──────────────────────────────────────────────────
+    logger.info(f"[XLSX] [3/4] Cek duplikat ke DB...")
+    t3 = time.time()
+
     existing_rows = (
         supabase.table("jadwal_kuliah")
         .select("hari, kode_mata_kuliah, dosen_utama, kelas, jam_mulai")
@@ -67,12 +81,29 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
         ) not in existing_keys
     ]
 
+    logger.info(
+        f"[XLSX] [3/4] SELESAI | "
+        f"existing={len(existing_rows)} | "
+        f"new={len(new_data)} | "
+        f"skipped={len(data) - len(new_data)} | "
+        f"waktu={time.time() - t3:.2f}s"
+    )
+
+    # ── STEP 4: Insert ke DB ──────────────────────────────────────────────────
     if new_data:
+        logger.info(f"[XLSX] [4/4] Insert {len(new_data)} baris ke database...")
+        t4 = time.time()
+
         if tahun_ajaran_id:
             for row in new_data:
                 row["tahun_ajaran_id"] = tahun_ajaran_id
+
         supabase.table("jadwal_kuliah").insert(new_data).execute()
-        invalidate_jadwal_cache()   # data jadwal berubah — paksa refresh cache
+        invalidate_jadwal_cache()
+
+        logger.info(f"[XLSX] [4/4] SELESAI | inserted={len(new_data)} | waktu={time.time() - t4:.2f}s")
+    else:
+        logger.info(f"[XLSX] [4/4] Tidak ada data baru — insert dilewati")
 
     return {
         "status":        "success",
