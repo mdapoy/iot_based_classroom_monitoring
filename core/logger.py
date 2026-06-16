@@ -29,3 +29,7 @@ def setup_logger():
 
 
 logger = setup_logger()
+
+# Suppress library eksternal agar tidak spam log di Railway
+for _lib in ("httpx", "httpcore", "urllib3", "supabase", "postgrest"):
+    logging.getLogger(_lib).setLevel(logging.WARNING)

@@ -107,13 +107,13 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
         t4 = time.time()
 
         for idx, batch in enumerate(batches, start=1):
-            t_batch = time.time()
             supabase.table("jadwal_kuliah").insert(batch).execute()
             total_inserted += len(batch)
-            logger.info(
-                f"[XLSX] [4/4] Batch {idx:>3}/{total_batch} selesai | "
-                f"rows={len(batch)} | waktu={time.time() - t_batch:.2f}s"
-            )
+            if idx % 10 == 0 or idx == total_batch:
+                logger.info(
+                    f"[XLSX] [4/4] Progress {idx}/{total_batch} batch | "
+                    f"inserted={total_inserted} | waktu={time.time() - t4:.2f}s"
+                )
 
         invalidate_jadwal_cache()
         logger.info(
