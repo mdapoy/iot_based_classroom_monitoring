@@ -6,6 +6,7 @@ from core.logger import logger
 from typing import Optional
 
 REQUIRED_COLUMNS = {"hari", "kode_mata_kuliah", "nama_mata_kuliah", "dosen", "kelas", "shift"}
+BATCH_SIZE       = 500  # baris per request ke Supabase
 
 
 def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
@@ -89,19 +90,36 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
         f"waktu={time.time() - t3:.2f}s"
     )
 
-    # ── STEP 4: Insert ke DB ──────────────────────────────────────────────────
+    # ── STEP 4: Batch insert ke DB ───────────────────────────────────────────
     if new_data:
-        logger.info(f"[XLSX] [4/4] Insert {len(new_data)} baris ke database...")
-        t4 = time.time()
-
         if tahun_ajaran_id:
             for row in new_data:
                 row["tahun_ajaran_id"] = tahun_ajaran_id
 
-        supabase.table("jadwal_kuliah").insert(new_data).execute()
-        invalidate_jadwal_cache()
+        batches      = [new_data[i:i + BATCH_SIZE] for i in range(0, len(new_data), BATCH_SIZE)]
+        total_batch  = len(batches)
+        total_inserted = 0
 
-        logger.info(f"[XLSX] [4/4] SELESAI | inserted={len(new_data)} | waktu={time.time() - t4:.2f}s")
+        logger.info(
+            f"[XLSX] [4/4] Insert {len(new_data)} baris "
+            f"dalam {total_batch} batch ({BATCH_SIZE}/batch)..."
+        )
+        t4 = time.time()
+
+        for idx, batch in enumerate(batches, start=1):
+            t_batch = time.time()
+            supabase.table("jadwal_kuliah").insert(batch).execute()
+            total_inserted += len(batch)
+            logger.info(
+                f"[XLSX] [4/4] Batch {idx:>3}/{total_batch} selesai | "
+                f"rows={len(batch)} | waktu={time.time() - t_batch:.2f}s"
+            )
+
+        invalidate_jadwal_cache()
+        logger.info(
+            f"[XLSX] [4/4] SELESAI | "
+            f"total_inserted={total_inserted} | waktu={time.time() - t4:.2f}s"
+        )
     else:
         logger.info(f"[XLSX] [4/4] Tidak ada data baru — insert dilewati")
 
