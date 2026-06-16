@@ -8,6 +8,7 @@ Endpoints:
   POST   /pertemuan/upload-kalender      → upload PDF kalender → auto-extract config
 """
 
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
@@ -279,21 +280,42 @@ async def upload_kalender(
     file: UploadFile = File(...),
     user: dict = Depends(optional_authenticated),
 ):
+    t_start = time.time()
+    logger.info(f"[KALENDER UPLOAD] ========== START ==========")
+
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Hanya file .pdf yang didukung")
 
     pdf_bytes = await file.read()
+    size_kb = len(pdf_bytes) / 1024
+    logger.info(f"[KALENDER UPLOAD] File: {file.filename} | Size: {size_kb:.1f} KB")
+
     if len(pdf_bytes) > MAX_PDF_BYTES:
         raise HTTPException(status_code=413, detail="Ukuran file melebihi 10 MB")
 
     # Parse PDF
     try:
+        t_parse = time.time()
         parsed = parse_kalender_pdf(pdf_bytes)
+        logger.info(
+            f"[KALENDER UPLOAD] Parse selesai | "
+            f"semesters={len(parsed)} | waktu={time.time() - t_parse:.2f}s"
+        )
     except Exception as e:
-        logger.error(f"[PERTEMUAN] Gagal parse PDF kalender: {e}", exc_info=True)
+        elapsed = time.time() - t_start
+        logger.error(
+            f"[KALENDER UPLOAD] ========== FAILED ========== | "
+            f"error={e} | waktu={elapsed:.2f}s",
+            exc_info=True,
+        )
         raise HTTPException(status_code=422, detail=f"Gagal membaca PDF: {e}")
 
     if not parsed:
+        elapsed = time.time() - t_start
+        logger.error(
+            f"[KALENDER UPLOAD] ========== FAILED ========== | "
+            f"error=Tidak ada data semester ditemukan | waktu={elapsed:.2f}s"
+        )
         raise HTTPException(
             status_code=422,
             detail="Tidak ada data semester yang ditemukan dalam PDF. "
@@ -361,6 +383,12 @@ async def upload_kalender(
 
     if not saved:
         available = [s["kode_semester"] for s in parsed]
+        elapsed = time.time() - t_start
+        logger.error(
+            f"[KALENDER UPLOAD] ========== FAILED ========== | "
+            f"error=Tidak ada semester cocok di DB | "
+            f"semester_di_pdf={available} | waktu={elapsed:.2f}s"
+        )
         raise HTTPException(
             status_code=404,
             detail=(
@@ -375,6 +403,13 @@ async def upload_kalender(
     sem_num    = "1" if ta_aktif["semester"].lower() == "ganjil" else "2"
     kode_aktif = f"{year_first}-{sem_num}"
     target     = next((s for s in parsed if s["kode_semester"] == kode_aktif), parsed[0])
+
+    elapsed = time.time() - t_start
+    logger.info(
+        f"[KALENDER UPLOAD] ========== DONE ========== | "
+        f"saved={len(saved)} | skipped={len(skipped)} | "
+        f"semester={saved} | total_waktu={elapsed:.2f}s"
+    )
 
     return {
         "status":              "success",
