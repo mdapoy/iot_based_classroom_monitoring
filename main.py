@@ -45,7 +45,7 @@ supabase = create_client(url, key)
 # Mencegah payload raksasa yang bisa membebani server (DDoS via large body)
 # ══════════════════════════════════════════════════════════════════════════════
 
-MAX_BODY_SIZE = int(os.getenv("MAX_BODY_SIZE_MB", "100")) * 1024 * 1024  # default 100 MB
+MAX_BODY_SIZE = int(os.getenv("MAX_BODY_SIZE_MB", "1")) * 1024 * 1024  # default 1 MB
 
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
