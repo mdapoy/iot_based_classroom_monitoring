@@ -1,3 +1,4 @@
+import asyncio
 import time
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from services.xlsx.xlsx_service import process_xlsx
@@ -31,11 +32,15 @@ async def upload_xlsx(
     file.file.seek(0)
 
     try:
-        result = process_xlsx(file.file, tahun_ajaran_id=tahun_ajaran_id)
+        result = await asyncio.to_thread(process_xlsx, file.file, tahun_ajaran_id=tahun_ajaran_id)
     except ValueError as e:
         elapsed = time.time() - t_start
         logger.error(f"[XLSX] ========== FAILED ========== | error={str(e)} | waktu={elapsed:.2f}s")
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        elapsed = time.time() - t_start
+        logger.error(f"[XLSX] ========== FAILED ========== | error={str(e)} | waktu={elapsed:.2f}s")
+        raise HTTPException(status_code=500, detail=f"Gagal menyimpan jadwal: {str(e)}")
 
     elapsed = time.time() - t_start
     logger.info(

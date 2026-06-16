@@ -1,3 +1,6 @@
+import io
+import time
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from repositories.supabase_client import supabase
 from models.rps_schema import RPSRequest, RPSConfirmRequest
@@ -5,8 +8,6 @@ from api.v1.deps import optional_authenticated
 from utils.file_validator import validate_csv
 from core.logger import logger
 from typing import Optional
-import pandas as pd
-import io
 
 router = APIRouter(prefix="/rps", tags=["rps"])
 
@@ -17,6 +18,9 @@ def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authent
     Simpan atau perbarui data RPS pertemuan ke tabel rps_pertemuan.
     Jika kombinasi kode_matkul + pertemuan_ke sudah ada, data akan diperbarui (upsert).
     """
+    t_start = time.time()
+    logger.info(f"[RPS] ========== START ========== | kode_matkul={data.kodeMatkul} pertemuan_ke={data.pertemuan}")
+
     payload = {
         "kode_matkul": data.kodeMatkul.strip(),
         "pertemuan_ke": data.pertemuan,
@@ -37,9 +41,11 @@ def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authent
             raise HTTPException(status_code=500, detail="Gagal menyimpan data RPS")
 
         saved = res.data[0]
+        elapsed = time.time() - t_start
         logger.info(
-            f"[RPS] Saved | kode_matkul={saved['kode_matkul']} "
-            f"pertemuan_ke={saved['pertemuan_ke']}"
+            f"[RPS] ========== DONE ========== | "
+            f"kode_matkul={saved['kode_matkul']} pertemuan_ke={saved['pertemuan_ke']} | "
+            f"total_waktu={elapsed:.2f}s"
         )
 
         return {
@@ -51,7 +57,8 @@ def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authent
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[RPS] Error saving: {e}", exc_info=True)
+        elapsed = time.time() - t_start
+        logger.error(f"[RPS] ========== FAILED ========== | error={e} | waktu={elapsed:.2f}s", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -68,7 +75,18 @@ async def upload_rps_csv(
       pengalaman_pembelajaran_mahasiswa
     Duplikat (kode_matkul + pertemuan_ke) di-upsert (update).
     """
+    t_start = time.time()
+    size_bytes = 0
+    file.file.seek(0, 2)
+    size_bytes = file.file.tell()
+    file.file.seek(0)
+    size_kb = size_bytes / 1024
+
+    logger.info(f"[RPS CSV] ========== START ==========")
+    logger.info(f"[RPS CSV] File: {file.filename} | Size: {size_kb:.1f} KB | TA: {tahun_ajaran_id}")
+
     validate_csv(file)
+    file.file.seek(0)
 
     REQUIRED_COLUMNS = {
         "kode_matkul",
@@ -150,10 +168,12 @@ async def upload_rps_csv(
         )
         count = len(res.data or [])
 
+        total_skipped = len(invalid_rows) + auto_skipped
+        elapsed = time.time() - t_start
         logger.info(
-            f"[RPS CSV] Uploaded | success={count} "
-            f"invalid={len(invalid_rows)} auto_skipped={auto_skipped} "
-            f"kode_matkul={df['kode_matkul'].unique().tolist()}"
+            f"[RPS CSV] ========== DONE ========== | "
+            f"upserted={count} | skipped={total_skipped} | "
+            f"kode_matkul={df['kode_matkul'].unique().tolist()} | total_waktu={elapsed:.2f}s"
         )
 
         # ── Susun laporan error ──────────────────────────────────────────────
@@ -168,8 +188,6 @@ async def upload_rps_csv(
                 ),
             })
 
-        total_skipped = len(invalid_rows) + auto_skipped
-
         return {
             "status":        "success",
             "message":       f"{count} baris RPS berhasil disimpan.",
@@ -181,7 +199,8 @@ async def upload_rps_csv(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[RPS CSV] Error: {e}", exc_info=True)
+        elapsed = time.time() - t_start
+        logger.error(f"[RPS CSV] ========== FAILED ========== | error={e} | waktu={elapsed:.2f}s", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -201,6 +220,10 @@ async def upload_rps_pdf_direct(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File harus berformat PDF")
 
+    t_start = time.time()
+    logger.info(f"[RPS PDF UPLOAD] ========== START ==========")
+    logger.info(f"[RPS PDF UPLOAD] File: {file.filename} | TA: {tahun_ajaran_id}")
+
     try:
         from services.rps.pdf_extractor import extract_rps_from_pdf, get_active_tahun_ajaran_id
 
@@ -208,8 +231,17 @@ async def upload_rps_pdf_direct(
         if len(file_bytes) == 0:
             raise HTTPException(status_code=400, detail="File PDF kosong")
 
+        size_kb = len(file_bytes) / 1024
+        logger.info(f"[RPS PDF UPLOAD] Size: {size_kb:.1f} KB")
+
         # Ekstrak data dari PDF
+        t_extract = time.time()
         result = extract_rps_from_pdf(file_bytes)
+        logger.info(
+            f"[RPS PDF UPLOAD] Ekstrak selesai | "
+            f"kode_matkul={result.get('kode_matkul')} | rows={len(result['rows'])} | "
+            f"waktu={time.time() - t_extract:.2f}s"
+        )
 
         if not result["rows"]:
             raise HTTPException(
@@ -249,9 +281,11 @@ async def upload_rps_pdf_direct(
         )
         count = len(res.data or [])
 
+        elapsed = time.time() - t_start
         logger.info(
-            f"[RPS PDF UPLOAD] kode_matkul={kode_matkul} rows={count} "
-            f"warnings={len(result['warnings'])} tahun_ajaran_id={ta_id}"
+            f"[RPS PDF UPLOAD] ========== DONE ========== | "
+            f"upserted={count} | kode_matkul={kode_matkul} | "
+            f"warnings={len(result['warnings'])} | tahun_ajaran_id={ta_id} | total_waktu={elapsed:.2f}s"
         )
 
         return {
@@ -262,13 +296,14 @@ async def upload_rps_pdf_direct(
             "nama_matkul":   result.get("nama_matkul"),
             "tahun_ajaran_id": ta_id,
             "skipped":       0,
-            "errors":        result["warnings"],  # warnings ditampilkan sebagai info
+            "errors":        result["warnings"],
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[RPS PDF UPLOAD] Error: {e}", exc_info=True)
+        elapsed = time.time() - t_start
+        logger.error(f"[RPS PDF UPLOAD] ========== FAILED ========== | error={e} | waktu={elapsed:.2f}s", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -295,6 +330,10 @@ async def extract_rps_pdf(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File harus berformat PDF")
 
+    t_start = time.time()
+    logger.info(f"[RPS PDF EXTRACT] ========== START ==========")
+    logger.info(f"[RPS PDF EXTRACT] File: {file.filename}")
+
     try:
         from services.rps.pdf_extractor import extract_rps_from_pdf
 
@@ -302,6 +341,9 @@ async def extract_rps_pdf(
 
         if len(file_bytes) == 0:
             raise HTTPException(status_code=400, detail="File PDF kosong")
+
+        size_kb = len(file_bytes) / 1024
+        logger.info(f"[RPS PDF EXTRACT] Size: {size_kb:.1f} KB")
 
         result = extract_rps_from_pdf(file_bytes)
 
@@ -312,9 +354,11 @@ async def extract_rps_pdf(
                        "Pastikan file adalah RPS format Telkom University."
             )
 
+        elapsed = time.time() - t_start
         logger.info(
-            f"[RPS PDF] Extracted | file={file.filename} "
-            f"kode_matkul={result['kode_matkul']} rows={len(result['rows'])}"
+            f"[RPS PDF EXTRACT] ========== DONE ========== | "
+            f"rows={len(result['rows'])} | kode_matkul={result['kode_matkul']} | "
+            f"total_waktu={elapsed:.2f}s"
         )
 
         return {
@@ -327,7 +371,8 @@ async def extract_rps_pdf(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[RPS PDF] Error: {e}", exc_info=True)
+        elapsed = time.time() - t_start
+        logger.error(f"[RPS PDF EXTRACT] ========== FAILED ========== | error={e} | waktu={elapsed:.2f}s", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -345,6 +390,12 @@ def confirm_insert_rps(
     """
     if not data.rows:
         raise HTTPException(status_code=400, detail="Tidak ada baris data yang dikirim")
+
+    t_start = time.time()
+    logger.info(
+        f"[RPS CONFIRM] ========== START ========== | "
+        f"kode_matkul={data.kode_matkul} | rows={len(data.rows)}"
+    )
 
     try:
         # Resolve tahun_ajaran_id
@@ -373,10 +424,11 @@ def confirm_insert_rps(
         )
 
         count = len(res.data or [])
-
+        elapsed = time.time() - t_start
         logger.info(
-            f"[RPS PDF] Inserted | kode_matkul={data.kode_matkul} "
-            f"rows={count} tahun_ajaran_id={tahun_ajaran_id}"
+            f"[RPS CONFIRM] ========== DONE ========== | "
+            f"upserted={count} | kode_matkul={data.kode_matkul} | "
+            f"tahun_ajaran_id={tahun_ajaran_id} | total_waktu={elapsed:.2f}s"
         )
 
         return {
@@ -390,7 +442,8 @@ def confirm_insert_rps(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[RPS PDF] Confirm insert error: {e}", exc_info=True)
+        elapsed = time.time() - t_start
+        logger.error(f"[RPS CONFIRM] ========== FAILED ========== | error={e} | waktu={elapsed:.2f}s", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -54,7 +54,7 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
 
     existing_rows = (
         supabase.table("jadwal_kuliah")
-        .select("hari, kode_mata_kuliah, dosen_utama, kelas, jam_mulai")
+        .select("hari, mata_kuliah, ruangan, kelas, jam_mulai, jam_selesai")
         .execute()
         .data
         or []
@@ -63,10 +63,11 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
     existing_keys = {
         (
             r.get("hari"),
-            r.get("kode_mata_kuliah"),
-            r.get("dosen_utama"),
+            r.get("mata_kuliah"),
+            r.get("ruangan") or "",
             r.get("kelas"),
             r.get("jam_mulai"),
+            r.get("jam_selesai"),
         )
         for r in existing_rows
     }
@@ -75,10 +76,11 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
         row for row in data
         if (
             row.get("hari"),
-            row.get("kode_mata_kuliah"),
-            row.get("dosen_utama"),
+            row.get("mata_kuliah"),
+            row.get("ruangan") or "",
             row.get("kelas"),
             row.get("jam_mulai"),
+            row.get("jam_selesai"),
         ) not in existing_keys
     ]
 
@@ -107,7 +109,7 @@ def process_xlsx(file, tahun_ajaran_id: Optional[str] = None):
         t4 = time.time()
 
         for idx, batch in enumerate(batches, start=1):
-            supabase.table("jadwal_kuliah").insert(batch).execute()
+            supabase.table("jadwal_kuliah").upsert(batch, ignore_duplicates=True).execute()
             total_inserted += len(batch)
             if idx % 10 == 0 or idx == total_batch:
                 logger.info(
