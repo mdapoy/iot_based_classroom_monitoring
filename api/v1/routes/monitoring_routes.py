@@ -69,19 +69,32 @@ def build_kehadiran_index():
 
 
 def build_activity_index():
-    """Index activity_stats, key = (kode_matkul, tanggal)."""
+    """Index activity_stats, key = monitoring_id.
+    Chain: monitoring.id → reports.monitoring_id → activity_stats.report_id"""
+    rpt_rows = (
+        supabase.table("reports")
+        .select("id, monitoring_id")
+        .not_.is_("monitoring_id", "null")
+        .execute()
+        .data or []
+    )
+    if not rpt_rows:
+        return {}
+    report_to_mon = {r["id"]: r["monitoring_id"] for r in rpt_rows}
     rows = (
         supabase.table("activity_stats")
-        .select("kode_matkul, tanggal, dominant_activity, "
-                "ceramah_pct, tanya_jawab_pct, diskusi_pct, diam_pct, pertemuan_ke")
+        .select("report_id, dominant_activity, ceramah_pct, tanya_jawab_pct, "
+                "diskusi_pct, diam_pct, pertemuan_ke")
+        .in_("report_id", list(report_to_mon.keys()))
         .order("id")
         .execute()
         .data or []
     )
     idx = {}
     for r in rows:
-        if r.get("kode_matkul") and r.get("tanggal"):
-            idx[(r["kode_matkul"], r["tanggal"])] = r
+        mon_id = report_to_mon.get(r["report_id"])
+        if mon_id:
+            idx[mon_id] = r
     return idx
 
 @router.post("/monitoring/scan-drive")
@@ -273,8 +286,8 @@ def get_monitoring(
         # ── Kehadiran: dari rec_session via (jadwal_id, tanggal) ──
         kehadiran_raw = kehadiran_idx.get((item.get("jadwal_id"), item.get("tanggal")))
 
-        # ── Aktivitas: dari activity_stats via (kode_matkul, tanggal) ──
-        act = activity_idx.get((j.get("kode_mata_kuliah"), item.get("tanggal")))
+        # ── Aktivitas: dari activity_stats via monitoring_id ──
+        act = activity_idx.get(item["id"])
         aktivitas_raw = act.get("dominant_activity") if act else None
 
         tanggal = item["tanggal"]
@@ -333,18 +346,26 @@ def get_monitoring_detail(monitoring_id: int, user: dict = Depends(optional_auth
     kehadiran_raw = keh[0]["kehadiran"] if keh else None
     m["kehadiran"] = format_kehadiran(kehadiran_raw) or "-"
 
-    # ── Aktivitas: dari activity_stats via (kode_matkul + tanggal) ──
-    act = (
-        supabase.table("activity_stats")
-        .select("dominant_activity, ceramah_pct, tanya_jawab_pct, "
-                "diskusi_pct, diam_pct, pertemuan_ke")
-        .eq("kode_matkul", j.get("kode_mata_kuliah"))
-        .eq("tanggal", m.get("tanggal"))
-        .order("id", desc=True)
+    # ── Aktivitas: via reports.monitoring_id → activity_stats.report_id ──
+    rpt = (
+        supabase.table("reports")
+        .select("id")
+        .eq("monitoring_id", monitoring_id)
         .limit(1)
         .execute()
         .data
     )
+    act = None
+    if rpt:
+        act = (
+            supabase.table("activity_stats")
+            .select("dominant_activity, ceramah_pct, tanya_jawab_pct, "
+                    "diskusi_pct, diam_pct, pertemuan_ke")
+            .eq("report_id", rpt[0]["id"])
+            .limit(1)
+            .execute()
+            .data
+        )
     if act:
         stats = act[0]
         m["activity_stats"]    = stats
