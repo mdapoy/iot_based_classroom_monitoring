@@ -152,7 +152,7 @@ def generate_combined_pdf(
     C_PRI  = HexColor("#7B1C2E")   # Telkom dark red
     C_GOLD = HexColor("#C8A84B")   # gold (reserved)
     C_GRN  = HexColor("#2E7D32")   # sesuai green
-    C_INT  = HexColor("#7B3FBE")   # diskusi & tanya jawab purple
+    C_INT  = HexColor("#C8A84B")   # diskusi & tanya jawab gold
     C_LBL  = HexColor("#999999")   # muted label
     C_BG   = HexColor("#F5F5F5")   # card background
     C_BDR  = HexColor("#DDDDDD")   # card border
@@ -238,10 +238,10 @@ def generate_combined_pdf(
         c.drawString(x + SZ + 5, y, text)
 
     # ── Helper: single progress bar row ─────────────────────────────
-    def _pbar(c, label, pct, color, y):
-        LW, bh = 90, 11
-        bx = ML + LW
-        bw = CW - LW - 28
+    def _pbar(c, label, pct, color, y, lw=90):
+        bh = 11
+        bx = ML + lw
+        bw = CW - lw - 28
         c.setFillColor(C_TXT)
         c.setFont(_FONT, 9)
         c.drawString(ML, y, label)
@@ -357,10 +357,14 @@ def generate_combined_pdf(
     c.drawRightString(MR, y, hdr_txt)
     y -= 32
 
-    # Title
+    # Title — auto-shrink font agar tidak melebihi margin kanan
+    _title = "LAPORAN IDENTIFIKASI PEMBELAJARAN"
+    _tfsize = 24
+    while _tfsize > 14 and c.stringWidth(_title, _FONT_BOLD, _tfsize) > CW:
+        _tfsize -= 0.5
     c.setFillColor(C_TXT)
-    c.setFont(_FONT_BOLD, 24)
-    c.drawString(ML, y, "LAPORAN IDENTIFIKASI PEMBELAJARAN")
+    c.setFont(_FONT_BOLD, _tfsize)
+    c.drawString(ML, y, _title)
     y -= 22
 
     # Subtitle — format: FISIKA 2 (AZK1GAB3) | Pertemuan ke-9 | TK-48-GAB1 | MFC
@@ -532,13 +536,15 @@ def generate_combined_pdf(
     c.drawString(ML + dw, y, dominant)
     y -= 18
 
-    # Progress bars
-    for lbl, pct, col in [
+    # Progress bars — hitung LW dari label terpanjang agar semua bar rata
+    _pbar_rows = [
         ("Ceramah",               cer_pct, C_PRI),
         ("Diskusi & Tanya Jawab", int_pct, C_INT),
         ("Diam",                  dim_pct, HexColor("#BDBDBD")),
-    ]:
-        y = _pbar(c, lbl, pct, col, y)
+    ]
+    _pbar_lw = max(c.stringWidth(l, _FONT, 9) for l, _, _ in _pbar_rows) + 12
+    for lbl, pct, col in _pbar_rows:
+        y = _pbar(c, lbl, pct, col, y, _pbar_lw)
     y -= 8
 
     # Duration summary table — 4 columns
