@@ -198,7 +198,7 @@ def generate_combined_pdf(
 
     # ── Helper: 4-column info card ───────────────────────────────────
     def _info_card(c, matkul, ptm, status, tgl, y):
-        H = 48
+        H = 62
         cw4 = CW / 4
         c.setFillColor(white)
         c.setStrokeColor(C_BDR)
@@ -216,8 +216,16 @@ def generate_combined_pdf(
             c.drawString(cx, y - 13, h)
             fc = (C_GRN if "tepat" in v.lower() else C_PRI) if h == "STATUS WAKTU" else C_TXT
             c.setFillColor(fc)
-            c.setFont(_FONT_BOLD, 11)
-            c.drawString(cx, y - 34, v)
+            if h == "MATA KULIAH":
+                v = re.sub(r'\s*\(.*?\)', '', v).strip()
+                words = v.split()
+                lines = [" ".join(words[j:j+2]) for j in range(0, len(words), 2)]
+                c.setFont(_FONT_BOLD, 9)
+                for k, line in enumerate(lines):
+                    c.drawString(cx, y - 28 - k * 13, line)
+            else:
+                c.setFont(_FONT_BOLD, 11)
+                c.drawString(cx, y - 38, v)
         return y - H
 
     # ── Helper: colored square + bold text (status indicator) ────────
