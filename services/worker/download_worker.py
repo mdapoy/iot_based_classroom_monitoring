@@ -67,6 +67,7 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
         )
 
         # ── STEP 1b: Update metadata dari real filename ───────────────
+        meta = {}
         try:
             from utils.metadata_parser import parse_filename
             meta = parse_filename(real_filename)
@@ -74,6 +75,47 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
             logger.info(f"[DOWNLOAD WORKER] Metadata di-update | ruangan={meta.get('ruangan')}")
         except Exception as meta_err:
             logger.warning(f"[DOWNLOAD WORKER] Gagal parse/update metadata: {meta_err}")
+
+        # ── STEP 1c: Resolve monitoring_id ───────────────────────────
+        try:
+            from repositories.cache import get_all_jadwal
+            jadwal = next(
+                (j for j in get_all_jadwal()
+                 if j.get("kode_mata_kuliah") == meta.get("kode_matkul")
+                 and j.get("dosen_utama")     == meta.get("kode_dosen")
+                 and j.get("kelas")           == meta.get("kelas")),
+                None
+            )
+            if jadwal:
+                mon_res = (
+                    supabase.table("monitoring")
+                    .select("id")
+                    .eq("jadwal_id", jadwal["id"])
+                    .eq("tanggal", meta.get("tanggal"))
+                    .single()
+                    .execute()
+                )
+                if mon_res.data:
+                    supabase.table("reports").update(
+                        {"monitoring_id": mon_res.data["id"]}
+                    ).eq("id", report_id).execute()
+                    logger.info(
+                        f"[DOWNLOAD WORKER] monitoring_id di-set | "
+                        f"monitoring_id={mon_res.data['id']}"
+                    )
+                else:
+                    logger.warning(
+                        f"[DOWNLOAD WORKER] monitoring entry tidak ditemukan | "
+                        f"jadwal_id={jadwal['id']} tanggal={meta.get('tanggal')}"
+                    )
+            else:
+                logger.warning(
+                    f"[DOWNLOAD WORKER] jadwal tidak ditemukan untuk resolve monitoring_id | "
+                    f"kode_matkul={meta.get('kode_matkul')} kode_dosen={meta.get('kode_dosen')} "
+                    f"kelas={meta.get('kelas')}"
+                )
+        except Exception as mon_err:
+            logger.warning(f"[DOWNLOAD WORKER] Gagal resolve monitoring_id: {mon_err}")
 
         # ── STEP 2: Update status DB ──────────────────────────────────
         supabase.table("reports").update(

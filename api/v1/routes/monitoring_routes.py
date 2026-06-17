@@ -69,12 +69,10 @@ def build_kehadiran_index():
 
 
 def build_activity_index():
-    """Index activity_stats.
-    Primary key  = (jadwal_id, tanggal)   — untuk record baru yang punya jadwal_id.
-    Fallback key = (kode_matkul, tanggal) — untuk record lama dengan jadwal_id NULL."""
+    """Index activity_stats, key = (kode_matkul, tanggal)."""
     rows = (
         supabase.table("activity_stats")
-        .select("jadwal_id, kode_matkul, tanggal, dominant_activity, "
+        .select("kode_matkul, tanggal, dominant_activity, "
                 "ceramah_pct, tanya_jawab_pct, diskusi_pct, diam_pct, pertemuan_ke")
         .order("id")
         .execute()
@@ -82,12 +80,7 @@ def build_activity_index():
     )
     idx = {}
     for r in rows:
-        if not r.get("tanggal"):
-            continue
-        if r.get("jadwal_id"):
-            idx[(r["jadwal_id"], r["tanggal"])] = r
-        elif r.get("kode_matkul"):
-            # fallback: jadwal_id belum terisi (record lama)
+        if r.get("kode_matkul") and r.get("tanggal"):
             idx[(r["kode_matkul"], r["tanggal"])] = r
     return idx
 
@@ -280,11 +273,8 @@ def get_monitoring(
         # ── Kehadiran: dari rec_session via (jadwal_id, tanggal) ──
         kehadiran_raw = kehadiran_idx.get((item.get("jadwal_id"), item.get("tanggal")))
 
-        # ── Aktivitas: primary key (jadwal_id, tanggal), fallback (kode_matkul, tanggal) ──
-        act = (
-            activity_idx.get((item.get("jadwal_id"), item.get("tanggal")))
-            or activity_idx.get((j.get("kode_mata_kuliah"), item.get("tanggal")))
-        )
+        # ── Aktivitas: dari activity_stats via (kode_matkul, tanggal) ──
+        act = activity_idx.get((j.get("kode_mata_kuliah"), item.get("tanggal")))
         aktivitas_raw = act.get("dominant_activity") if act else None
 
         tanggal = item["tanggal"]
@@ -343,34 +333,18 @@ def get_monitoring_detail(monitoring_id: int, user: dict = Depends(optional_auth
     kehadiran_raw = keh[0]["kehadiran"] if keh else None
     m["kehadiran"] = format_kehadiran(kehadiran_raw) or "-"
 
-    # ── Aktivitas: primary (jadwal_id + tanggal), fallback (kode_matkul + tanggal) ──
-    _jadwal_id = m.get("jadwal_id")
-    if _jadwal_id:
-        act = (
-            supabase.table("activity_stats")
-            .select("dominant_activity, ceramah_pct, tanya_jawab_pct, "
-                    "diskusi_pct, diam_pct, pertemuan_ke")
-            .eq("jadwal_id", _jadwal_id)
-            .eq("tanggal", m.get("tanggal"))
-            .order("id", desc=True)
-            .limit(1)
-            .execute()
-            .data
-        )
-    else:
-        act = None
-    if not act:
-        act = (
-            supabase.table("activity_stats")
-            .select("dominant_activity, ceramah_pct, tanya_jawab_pct, "
-                    "diskusi_pct, diam_pct, pertemuan_ke")
-            .eq("kode_matkul", j.get("kode_mata_kuliah"))
-            .eq("tanggal", m.get("tanggal"))
-            .order("id", desc=True)
-            .limit(1)
-            .execute()
-            .data
-        )
+    # ── Aktivitas: dari activity_stats via (kode_matkul + tanggal) ──
+    act = (
+        supabase.table("activity_stats")
+        .select("dominant_activity, ceramah_pct, tanya_jawab_pct, "
+                "diskusi_pct, diam_pct, pertemuan_ke")
+        .eq("kode_matkul", j.get("kode_mata_kuliah"))
+        .eq("tanggal", m.get("tanggal"))
+        .order("id", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
     if act:
         stats = act[0]
         m["activity_stats"]    = stats

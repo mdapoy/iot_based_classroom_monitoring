@@ -47,30 +47,10 @@ def _fetch_chunks(report_id: int) -> tuple[list[dict], float]:
 
 
 def _insert_activity_stats(report: dict, report_id: int, pertemuan_ke: int, activity_result: dict):
-    """
-    Simpan statistik aktivitas ke tabel activity_stats.
-    Kaitkan ke jadwal_kuliah melalui monitoring_id yang ada di reports.
-    """
+    """Simpan statistik aktivitas ke tabel activity_stats."""
     try:
-        monitoring_id = report.get("monitoring_id")
-        jadwal_id     = None
-
-        # Ambil jadwal_id dari tabel monitoring
-        if monitoring_id:
-            mon_res = (
-                supabase.table("monitoring")
-                .select("jadwal_id")
-                .eq("id", monitoring_id)
-                .single()
-                .execute()
-            )
-            if mon_res.data:
-                jadwal_id = mon_res.data.get("jadwal_id")
-
         payload = {
             "report_id":           report_id,
-            "monitoring_id":       monitoring_id,
-            "jadwal_id":           jadwal_id,
             "pertemuan_ke":        pertemuan_ke,
             "tanggal":             str(report.get("tanggal")) if report.get("tanggal") else None,
             "kode_matkul":         report.get("kode_matkul"),

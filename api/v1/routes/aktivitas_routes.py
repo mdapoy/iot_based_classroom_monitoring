@@ -40,7 +40,7 @@ def _fetch_stats(
     q = supabase.table("activity_stats").select(
         "id, tanggal, kode_matkul, pertemuan_ke, "
         "dominant_activity, ceramah_pct, tanya_jawab_pct, diskusi_pct, diam_pct, "
-        "ceramah_sec, tanya_jawab_sec, diskusi_sec, diam_sec, jadwal_id"
+        "ceramah_sec, tanya_jawab_sec, diskusi_sec, diam_sec"
     )
     if start:
         q = q.gte("tanggal", str(start))
@@ -56,8 +56,7 @@ def _fetch_stats(
     if tahun_ajaran_id:
         jadwal_rows = [j for j in jadwal_rows if j.get("tahun_ajaran_id") == tahun_ajaran_id]
 
-    # index: by id, by kode_matkul (list)
-    by_id: dict = {j["id"]: j for j in jadwal_rows}
+    # index: by kode_matkul (list)
     by_kode: dict = defaultdict(list)
     for j in jadwal_rows:
         if j.get("kode_mata_kuliah"):
@@ -65,11 +64,7 @@ def _fetch_stats(
 
     enriched = []
     for s in stats:
-        j = None
-        if s.get("jadwal_id") and s["jadwal_id"] in by_id:
-            j = by_id[s["jadwal_id"]]
-        elif s.get("kode_matkul") in by_kode:
-            j = by_kode[s["kode_matkul"]][0]
+        j = by_kode[s["kode_matkul"]][0] if s.get("kode_matkul") in by_kode else None
 
         # Kalau TA filter aktif, buang stats yang tidak match jadwal TA ini
         if tahun_ajaran_id and j is None:

@@ -95,11 +95,6 @@ def insert_metadata(data: dict, file_path: str):
 
     supabase.table(TABLE).insert(payload).execute()
 
-def insert_summary_record(report_id: int, file_path: str):
-    supabase.table("summary").insert({
-        "reports_id": report_id,
-        "file_path": file_path
-    }).execute()
 
 def generate_pdf(summary: str, output_path: str):
     dir_name = os.path.dirname(output_path)
