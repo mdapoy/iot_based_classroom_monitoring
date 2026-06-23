@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from repositories.supabase_client import supabase
 from models.rps_schema import RPSRequest, RPSConfirmRequest
-from api.v1.deps import optional_authenticated
+from api.v1.deps import require_authenticated
 from utils.file_validator import validate_csv
 from core.logger import logger
 from typing import Optional
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/rps", tags=["rps"])
 
 
 @router.post("")
-def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authenticated)):
+def create_or_update_rps(data: RPSRequest, user: dict = Depends(require_authenticated)):
     """
     Simpan atau perbarui data RPS pertemuan ke tabel rps_pertemuan.
     Jika kombinasi kode_matkul + pertemuan_ke sudah ada, data akan diperbarui (upsert).
@@ -66,7 +66,7 @@ def create_or_update_rps(data: RPSRequest, user: dict = Depends(optional_authent
 async def upload_rps_csv(
     file: UploadFile = File(...),
     tahun_ajaran_id: Optional[str] = Form(None),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     """
     Upload RPS dari file CSV sekaligus.
@@ -208,7 +208,7 @@ async def upload_rps_csv(
 async def upload_rps_pdf_direct(
     file: UploadFile = File(...),
     tahun_ajaran_id: Optional[str] = Form(None),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     """
     Upload PDF RPS → ekstrak → langsung simpan ke DB dalam satu langkah.
@@ -310,7 +310,7 @@ async def upload_rps_pdf_direct(
 @router.post("/extract-pdf")
 async def extract_rps_pdf(
     file: UploadFile = File(...),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     """
     Upload file PDF RPS (format Telkom University) dan ekstrak datanya.
@@ -379,7 +379,7 @@ async def extract_rps_pdf(
 @router.post("/confirm-insert")
 def confirm_insert_rps(
     data: RPSConfirmRequest,
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     """
     Simpan hasil ekstraksi PDF ke tabel rps_pertemuan (bulk upsert).
@@ -448,7 +448,7 @@ def confirm_insert_rps(
 
 
 @router.delete("/matkul/{kode_matkul}")
-def delete_rps_by_matkul(kode_matkul: str, user: dict = Depends(optional_authenticated)):
+def delete_rps_by_matkul(kode_matkul: str, user: dict = Depends(require_authenticated)):
     """Hapus seluruh pertemuan RPS untuk satu kode mata kuliah."""
     try:
         kode = kode_matkul.strip()
@@ -471,7 +471,7 @@ def delete_rps_by_matkul(kode_matkul: str, user: dict = Depends(optional_authent
 
 
 @router.delete("/{rps_id}")
-def delete_rps(rps_id: int, user: dict = Depends(optional_authenticated)):
+def delete_rps(rps_id: int, user: dict = Depends(require_authenticated)):
     """Hapus satu baris RPS pertemuan berdasarkan id."""
     try:
         existing = (
@@ -501,7 +501,7 @@ def delete_rps(rps_id: int, user: dict = Depends(optional_authenticated)):
 def get_rps_list(
     kode_matkul: Optional[str] = None,
     tahun_ajaran_id: Optional[str] = None,
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     """
     Ambil daftar RPS. Bisa difilter berdasarkan kode_matkul dan/atau tahun_ajaran_id.

@@ -3,13 +3,13 @@ from services.report.report_orchestrator import generate_report
 from services.report.report_service import get_existing_summary
 from repositories.supabase_client import supabase
 from models.report_schema import ReportRequest
-from api.v1.deps import require_authenticated, optional_authenticated
+from api.v1.deps import require_authenticated, require_authenticated
 from core.logger import logger
 
 router = APIRouter(tags=["report"])
 
 @router.post("/generate-report")
-async def generate(data: ReportRequest, user: dict = Depends(optional_authenticated)):
+async def generate(data: ReportRequest, user: dict = Depends(require_authenticated)):
 
     payload = {
         "tanggal": data.tanggal,
@@ -30,7 +30,7 @@ def get_filters(
     dosen: str = None,
     ruangan: str = None,
     kelas: str = None,
-    user: dict = Depends(optional_authenticated)
+    user: dict = Depends(require_authenticated)
 ):
 
     # 🔍 QUERY BASE
@@ -82,7 +82,7 @@ def get_filters(
     }
 
 @router.get("/summary/{report_id}")
-async def get_summary(report_id: int, user: dict = Depends(optional_authenticated)):
+async def get_summary(report_id: int, user: dict = Depends(require_authenticated)):
     
     summary = get_existing_summary(report_id)
 
@@ -109,7 +109,7 @@ async def get_summary(report_id: int, user: dict = Depends(optional_authenticate
     }
 
 @router.get("/report-status/{report_id}")
-async def get_report_status(report_id: int, user: dict = Depends(optional_authenticated)):
+async def get_report_status(report_id: int, user: dict = Depends(require_authenticated)):
     res = supabase.table("reports") \
         .select("status, error_message") \
         .eq("id", report_id) \

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from api.v1.deps import optional_authenticated
+from api.v1.deps import require_authenticated
 from repositories.supabase_client import supabase
 from services.rps.rps_service import get_active_config, invalidate_config_cache
 from services.akademik.kalender_parser import parse_kalender_pdf
@@ -171,7 +171,7 @@ def _compute_current_week(start_str: str | None, skip_dates: list) -> int | None
 @router.get("/config")
 def get_config(
     tahun_ajaran_id: Optional[str] = Query(None),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     ta  = _resolve_ta(tahun_ajaran_id)
     cfg = _get_or_create_config(ta["id"])
@@ -205,7 +205,7 @@ def get_config(
 # ── 2. POST tambah skip date ──────────────────────────────────────────────────
 
 @router.post("/skip-dates")
-def add_skip_date(body: SkipDateBody, user: dict = Depends(optional_authenticated)):
+def add_skip_date(body: SkipDateBody, user: dict = Depends(require_authenticated)):
     try:
         d = date.fromisoformat(body.tanggal)
     except ValueError:
@@ -242,7 +242,7 @@ def add_skip_date(body: SkipDateBody, user: dict = Depends(optional_authenticate
 def delete_skip_date(
     tanggal: str,
     tahun_ajaran_id: Optional[str] = Query(None),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     try:
         d = date.fromisoformat(tanggal)
@@ -278,7 +278,7 @@ def delete_skip_date(
 @router.post("/upload-kalender")
 async def upload_kalender(
     file: UploadFile = File(...),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     t_start = time.time()
     logger.info(f"[KALENDER UPLOAD] ========== START ==========")
@@ -429,6 +429,6 @@ async def upload_kalender(
 @router_legacy.post("/upload-pdf")
 async def upload_kalender_legacy(
     file: UploadFile = File(...),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     return await upload_kalender(file=file, user=user)

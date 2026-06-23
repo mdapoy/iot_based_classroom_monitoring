@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from repositories.supabase_client import supabase
 from repositories.cache import get_all_jadwal
+from api.v1.deps import require_authenticated
 from core.logger import logger
 from datetime import date, timedelta
 from typing import Optional
@@ -93,6 +94,7 @@ def get_summary(
     kelas: Optional[str] = None,
     range_days: int = Query(180, description="rentang hari ke belakang"),
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+    user: dict = Depends(require_authenticated),
 ):
     end = date.today()
     start = end - timedelta(days=range_days)
@@ -158,6 +160,7 @@ def get_per_matkul(
     kelas: Optional[str] = None,
     range_days: int = 180,
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+    user: dict = Depends(require_authenticated),
 ):
     end = date.today()
     start = end - timedelta(days=range_days)
@@ -222,10 +225,11 @@ def get_dashboard(
     kelas: Optional[str] = None,
     range_days: int = 180,
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+    user: dict = Depends(require_authenticated),
 ):
     return {
-        "summary":    get_summary(dosen, kelas, range_days, tahun_ajaran_id),
-        "per_matkul": get_per_matkul(dosen, kelas, range_days, tahun_ajaran_id),
+        "summary":    get_summary(dosen, kelas, range_days, tahun_ajaran_id, user),
+        "per_matkul": get_per_matkul(dosen, kelas, range_days, tahun_ajaran_id, user),
     }
 
 
@@ -233,7 +237,7 @@ def get_dashboard(
 # 4. TREND (LineChart Tren Aktivitas Pembelajaran)
 # =========================================================
 @router.get("/months")
-def get_available_months():
+def get_available_months(user: dict = Depends(require_authenticated)):
     """Daftar bulan yang punya data activity_stats, urut terbaru ke lama."""
     rows = supabase.table("activity_stats").select("tanggal").execute().data or []
 
@@ -252,6 +256,7 @@ def get_available_months():
 @router.get("/trend")
 def get_trend(
     month: str = Query(..., description="Format: 'Mei 2026'"),
+    user: dict = Depends(require_authenticated),
 ):
     """Agregat aktivitas pembelajaran per hari (SEN–SAB) untuk bulan tertentu.
     Persentase dihitung weighted by detik (lebih akurat saat banyak pertemuan)."""
@@ -313,6 +318,7 @@ def get_trend(
 @router.get("/options")
 def get_options(
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+    user: dict = Depends(require_authenticated),
 ):
     # Untuk aktivitas pakai dosen_utama (kode_dosen string di jadwal_kuliah)
     jadwal = get_all_jadwal()

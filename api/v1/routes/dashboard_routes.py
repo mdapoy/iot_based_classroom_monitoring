@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from repositories.supabase_client import supabase
 from repositories.cache import get_all_jadwal
+from api.v1.deps import require_authenticated
 from core.logger import logger
 from datetime import date, timedelta
 from typing import Optional
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 def get_summary(
     range_days: int = Query(180, description="rentang hari utk menghitung tepat_waktu_pct"),
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+    user: dict = Depends(require_authenticated),
 ):
     # ── total kelas (distinct kelas dari jadwal_kuliah) ──
     jadwal_rows = get_all_jadwal()
@@ -144,6 +146,7 @@ def _actual_minutes_from_summary(summary: Optional[dict]):
 @router.get("/anomali")
 def get_anomali(
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
+    user: dict = Depends(require_authenticated),
 ):
     # ── reports yang sudah selesai ──────────────────────────────────────────
     reports = (

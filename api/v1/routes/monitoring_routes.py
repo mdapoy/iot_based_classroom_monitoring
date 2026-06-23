@@ -3,7 +3,7 @@ from services.storage.gdrive_video import list_videos, list_audios
 from utils.metadata_parser import parse_filename_monitoring
 from repositories.supabase_client import supabase
 from repositories.cache import get_all_jadwal, get_kehadiran_index, get_activity_index
-from api.v1.deps import require_admin, require_authenticated, optional_authenticated
+from api.v1.deps import require_admin, require_authenticated
 from core.logger import logger
 from core.matkul_filter import is_matkul_blacklisted
 from services.rps.rps_service import get_meeting_week
@@ -53,7 +53,7 @@ def format_aktivitas(raw):
 
 
 @router.post("/monitoring/scan-drive")
-def scan_drive(user: dict = Depends(optional_authenticated)):
+def scan_drive(user: dict = Depends(require_authenticated)):
 
     global last_scan_time
 
@@ -209,7 +209,7 @@ def scan_drive(user: dict = Depends(optional_authenticated)):
 @router.get("/monitoring")
 def get_monitoring(
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     if tahun_ajaran_id:
         # !inner → hanya monitoring yang punya jadwal, lalu filter TA-nya
@@ -271,7 +271,7 @@ def get_monitoring(
     return data
 
 @router.get("/{monitoring_id}")
-def get_monitoring_detail(monitoring_id: int, user: dict = Depends(optional_authenticated)):
+def get_monitoring_detail(monitoring_id: int, user: dict = Depends(require_authenticated)):
 
     response = (
         supabase.table("monitoring")

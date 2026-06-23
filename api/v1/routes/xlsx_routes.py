@@ -3,7 +3,7 @@ import time
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from services.xlsx.xlsx_service import process_xlsx
 from utils.file_validator import validate_xlsx
-from api.v1.deps import optional_authenticated
+from api.v1.deps import require_authenticated
 from core.logger import logger
 from typing import Optional
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 async def upload_xlsx(
     file: UploadFile = File(...),
     tahun_ajaran_id: Optional[str] = Form(None),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     t_start = time.time()
 

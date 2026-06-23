@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from repositories.cache import get_all_jadwal
 from repositories.supabase_client import supabase
-from api.v1.deps import optional_authenticated
+from api.v1.deps import require_authenticated
 from core.logger import logger
 from typing import Optional
 
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/scheduled", tags=["scheduled"])
 @router.get("/jadwal")
 def get_jadwal(
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
-    user: dict = Depends(optional_authenticated),
+    user: dict = Depends(require_authenticated),
 ):
     jadwal = get_all_jadwal()
     if tahun_ajaran_id:
@@ -21,7 +21,7 @@ def get_jadwal(
 
 
 @router.delete("/jadwal/{jadwal_id}")
-def delete_jadwal(jadwal_id: int, user: dict = Depends(optional_authenticated)):
+def delete_jadwal(jadwal_id: int, user: dict = Depends(require_authenticated)):
     """Hapus satu jadwal kuliah berdasarkan id."""
     try:
         existing = (
