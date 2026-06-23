@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from services.storage.gdrive_video import list_videos, list_audios
 from utils.metadata_parser import parse_filename_monitoring
 from repositories.supabase_client import supabase
-from repositories.cache import get_all_jadwal
+from repositories.cache import get_all_jadwal, get_kehadiran_index, get_activity_index
 from api.v1.deps import require_admin, require_authenticated, optional_authenticated
 from core.logger import logger
 from core.matkul_filter import is_matkul_blacklisted
@@ -51,51 +51,6 @@ def format_aktivitas(raw):
     return AKTIVITAS_LABEL.get(str(raw).lower(), str(raw).title())
 
 
-def build_kehadiran_index():
-    """Index kehadiran dari rec_session, key = (jadwal_id, tanggal).
-    Order by id → baris terbaru menimpa yang lama."""
-    rows = (
-        supabase.table("rec_session")
-        .select("jadwal_id, tanggal, kehadiran")
-        .order("id")
-        .execute()
-        .data or []
-    )
-    idx = {}
-    for r in rows:
-        if r.get("jadwal_id") and r.get("tanggal"):
-            idx[(r["jadwal_id"], r["tanggal"])] = r.get("kehadiran")
-    return idx
-
-
-def build_activity_index():
-    """Index activity_stats, key = monitoring_id.
-    Chain: monitoring.id → reports.monitoring_id → activity_stats.report_id"""
-    rpt_rows = (
-        supabase.table("reports")
-        .select("id, monitoring_id")
-        .not_.is_("monitoring_id", "null")
-        .execute()
-        .data or []
-    )
-    if not rpt_rows:
-        return {}
-    report_to_mon = {r["id"]: r["monitoring_id"] for r in rpt_rows}
-    rows = (
-        supabase.table("activity_stats")
-        .select("report_id, dominant_activity, ceramah_pct, tanya_jawab_pct, "
-                "diskusi_pct, diam_pct, pertemuan_ke")
-        .in_("report_id", list(report_to_mon.keys()))
-        .order("id")
-        .execute()
-        .data or []
-    )
-    idx = {}
-    for r in rows:
-        mon_id = report_to_mon.get(r["report_id"])
-        if mon_id:
-            idx[mon_id] = r
-    return idx
 
 @router.post("/monitoring/scan-drive")
 def scan_drive(user: dict = Depends(optional_authenticated)):
@@ -268,9 +223,9 @@ def get_monitoring(
     else:
         monitoring = supabase.table("monitoring").select("*, jadwal_kuliah(*)").execute()
 
-    # Index sumber data asli (masing-masing 1 query) untuk derivasi non-hardcode
-    kehadiran_idx = build_kehadiran_index()
-    activity_idx  = build_activity_index()
+    # Index sumber data asli — cached 60 detik, diinvalidasi saat laporan selesai
+    kehadiran_idx = get_kehadiran_index()
+    activity_idx  = get_activity_index()
 
     data = []
 

@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 
 from repositories.supabase_client import supabase
+from repositories.cache import invalidate_monitoring_cache
 from services.storage.storage_service import download_transcript, upload_summary
 from services.summarizer.summarizer import summarize_text
 from services.report.report_service import generate_combined_pdf
@@ -79,9 +80,10 @@ def _insert_activity_stats(report: dict, report_id: int, pertemuan_ke: int, acti
         }
 
         supabase.table("activity_stats").insert(payload).execute()
+        invalidate_monitoring_cache()
         logger.info(
             f"[ACTIVITY STATS] Saved | report={report_id} "
-            f"pertemuan={pertemuan_ke} jadwal_id={jadwal_id} "
+            f"pertemuan={pertemuan_ke} "
             f"dominant={activity_result.get('dominant')}"
         )
 

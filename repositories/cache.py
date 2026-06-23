@@ -90,13 +90,6 @@ def invalidate_jadwal_cache() -> None:
         _jadwal_cache      = None
         _jadwal_expires_at = 0.0
     logger.info("[CACHE] jadwal_kuliah cache invalidated")
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# dosen
-# ═════════════════════════════════════════════════════════════════════════════
-
-def get_all_dosen() -> list[dict]:
     """
     Return semua dosen aktif (kode_dosen, nama_lengkap).
     Cache TTL 30 menit. Thread-safe.
@@ -131,3 +124,138 @@ def get_all_dosen() -> list[dict]:
             raise
 
     return _dosen_cache
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Monitoring index cache (kehadiran + activity)
+# TTL 60 detik. Diinvalidasi saat laporan selesai diproses.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_KEHADIRAN_IDX_LOCK = threading.Lock()
+_kehadiran_idx_cache:      dict | None = None
+_kehadiran_idx_expires_at: float       = 0.0
+
+_ACTIVITY_IDX_LOCK = threading.Lock()
+_activity_idx_cache:      dict | None = None
+_activity_idx_expires_at: float       = 0.0
+
+MONITORING_IDX_TTL: int = 60  # detik
+
+
+def get_kehadiran_index() -> dict:
+    """
+    Index kehadiran dari rec_session, key = (jadwal_id, tanggal).
+    Cache TTL 60 detik. Diinvalidasi oleh invalidate_monitoring_cache().
+    """
+    global _kehadiran_idx_cache, _kehadiran_idx_expires_at
+
+    now = time.monotonic()
+    if _kehadiran_idx_cache is not None and now < _kehadiran_idx_expires_at:
+        return _kehadiran_idx_cache
+
+    with _KEHADIRAN_IDX_LOCK:
+        if _kehadiran_idx_cache is not None and now < _kehadiran_idx_expires_at:
+            return _kehadiran_idx_cache
+
+        logger.info("[CACHE] Refreshing kehadiran index (rec_session)")
+        try:
+            rows = (
+                supabase.table("rec_session")
+                .select("jadwal_id, tanggal, kehadiran")
+                .order("id")
+                .execute()
+                .data or []
+            )
+            idx = {}
+            for r in rows:
+                if r.get("jadwal_id") and r.get("tanggal"):
+                    idx[(r["jadwal_id"], r["tanggal"])] = r.get("kehadiran")
+            _kehadiran_idx_cache      = idx
+            _kehadiran_idx_expires_at = time.monotonic() + MONITORING_IDX_TTL
+            logger.info(f"[CACHE] kehadiran index loaded: {len(idx)} entries")
+        except Exception as e:
+            logger.error(f"[CACHE] kehadiran index refresh failed: {e}")
+            if _kehadiran_idx_cache is not None:
+                logger.warning("[CACHE] Returning stale kehadiran index")
+                return _kehadiran_idx_cache
+            raise
+
+    return _kehadiran_idx_cache
+
+
+def get_activity_index() -> dict:
+    """
+    Index activity_stats, key = monitoring_id.
+    Chain: monitoring.id → reports.monitoring_id → activity_stats.report_id.
+    Cache TTL 60 detik. Diinvalidasi oleh invalidate_monitoring_cache().
+    """
+    global _activity_idx_cache, _activity_idx_expires_at
+
+    now = time.monotonic()
+    if _activity_idx_cache is not None and now < _activity_idx_expires_at:
+        return _activity_idx_cache
+
+    with _ACTIVITY_IDX_LOCK:
+        if _activity_idx_cache is not None and now < _activity_idx_expires_at:
+            return _activity_idx_cache
+
+        logger.info("[CACHE] Refreshing activity index (reports → activity_stats)")
+        try:
+            rpt_rows = (
+                supabase.table("reports")
+                .select("id, monitoring_id")
+                .not_.is_("monitoring_id", "null")
+                .execute()
+                .data or []
+            )
+            if not rpt_rows:
+                _activity_idx_cache      = {}
+                _activity_idx_expires_at = time.monotonic() + MONITORING_IDX_TTL
+                return _activity_idx_cache
+
+            report_to_mon = {r["id"]: r["monitoring_id"] for r in rpt_rows}
+            rows = (
+                supabase.table("activity_stats")
+                .select("report_id, dominant_activity, ceramah_pct, tanya_jawab_pct, "
+                        "diskusi_pct, diam_pct, pertemuan_ke")
+                .in_("report_id", list(report_to_mon.keys()))
+                .order("id")
+                .execute()
+                .data or []
+            )
+            idx = {}
+            for r in rows:
+                mon_id = report_to_mon.get(r["report_id"])
+                if mon_id:
+                    idx[mon_id] = r
+            _activity_idx_cache      = idx
+            _activity_idx_expires_at = time.monotonic() + MONITORING_IDX_TTL
+            logger.info(f"[CACHE] activity index loaded: {len(idx)} entries")
+        except Exception as e:
+            logger.error(f"[CACHE] activity index refresh failed: {e}")
+            if _activity_idx_cache is not None:
+                logger.warning("[CACHE] Returning stale activity index")
+                return _activity_idx_cache
+            raise
+
+    return _activity_idx_cache
+
+
+def invalidate_monitoring_cache() -> None:
+    """
+    Reset cache kehadiran dan activity index.
+    Dipanggil setelah laporan selesai diproses agar halaman monitoring
+    langsung menampilkan data terbaru tanpa menunggu TTL habis.
+    """
+    global _kehadiran_idx_cache, _kehadiran_idx_expires_at
+    global _activity_idx_cache,  _activity_idx_expires_at
+
+    with _KEHADIRAN_IDX_LOCK:
+        _kehadiran_idx_cache      = None
+        _kehadiran_idx_expires_at = 0.0
+
+    with _ACTIVITY_IDX_LOCK:
+        _activity_idx_cache      = None
+        _activity_idx_expires_at = 0.0
+
+    logger.info("[CACHE] monitoring index cache invalidated")
