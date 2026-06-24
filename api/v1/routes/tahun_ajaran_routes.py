@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from repositories.supabase_client import supabase
 from repositories.cache import get_all_jadwal
+from api.v1.deps import require_authenticated, require_admin
 from core.logger import logger
 from typing import Optional, List
 import re
@@ -98,6 +99,7 @@ def _enrich_with_counts(rows: list) -> list:
 @router.get("")
 def list_tahun_ajaran(
     with_counts: Optional[str] = Query(None, description="Set 'true' untuk sertakan jumlah jadwal & RPS"),
+    user: dict = Depends(require_authenticated),
 ):
     """Return list TA. Pakai ?with_counts=true untuk include jumlah jadwal & RPS."""
     try:
@@ -133,7 +135,7 @@ def list_tahun_ajaran(
 # 2. GET TA yang sedang aktif
 # =========================================================
 @router.get("/aktif")
-def get_tahun_ajaran_aktif():
+def get_tahun_ajaran_aktif(user: dict = Depends(require_authenticated)):
     try:
         res = (
             supabase.table("tahun_ajaran")
@@ -159,7 +161,7 @@ def get_tahun_ajaran_aktif():
 # 3. CREATE — otomatis bikin Ganjil + Genap
 # =========================================================
 @router.post("")
-def create_tahun_ajaran(data: TahunAjaranCreate):
+def create_tahun_ajaran(data: TahunAjaranCreate, user: dict = Depends(require_admin)):
     """Saat tambah TA baru → otomatis bikin 2 baris (Ganjil + Genap)."""
     try:
         # Cek apakah sudah ada
@@ -209,7 +211,7 @@ def create_tahun_ajaran(data: TahunAjaranCreate):
 # 4. UPDATE — terutama untuk set aktif
 # =========================================================
 @router.patch("/{ta_id}")
-def update_tahun_ajaran(ta_id: str, data: TahunAjaranUpdate):
+def update_tahun_ajaran(ta_id: str, data: TahunAjaranUpdate, user: dict = Depends(require_admin)):
     try:
         # Validasi exists
         existing = (
@@ -268,6 +270,7 @@ def update_tahun_ajaran(ta_id: str, data: TahunAjaranUpdate):
 def delete_tahun_ajaran(
     ta_id: str,
     force: Optional[str] = Query(None, description="Set 'true' untuk paksa hapus"),
+    user: dict = Depends(require_admin),
 ):
     """Hapus TA. Default: tolak kalau masih ada jadwal/RPS terkait.
     Pakai ?force=true untuk paksa hapus (tahun_ajaran_id di tabel terkait jadi NULL)."""
@@ -339,13 +342,13 @@ def delete_tahun_ajaran(
 # 6. ASSIGN DATA LAMA — tag jadwal atau RPS ke TA tertentu
 # =========================================================
 @router.post("/assign-jadwal")
-def assign_jadwal_to_ta(data: AssignTahunAjaran):
+def assign_jadwal_to_ta(data: AssignTahunAjaran, user: dict = Depends(require_admin)):
     """Tag list jadwal_kuliah ke tahun_ajaran tertentu."""
     return _assign_to_ta("jadwal_kuliah", data.tahun_ajaran_id, data.ids)
 
 
 @router.post("/assign-rps")
-def assign_rps_to_ta(data: AssignTahunAjaran):
+def assign_rps_to_ta(data: AssignTahunAjaran, user: dict = Depends(require_admin)):
     """Tag list rps_pertemuan ke tahun_ajaran tertentu."""
     return _assign_to_ta("rps_pertemuan", data.tahun_ajaran_id, data.ids)
 
@@ -401,7 +404,7 @@ def _assign_to_ta(table: str, ta_id: str, ids: List[str]):
 # 7. UNASSIGNED — list data yang belum punya TA
 # =========================================================
 @router.get("/unassigned/jadwal")
-def list_jadwal_unassigned():
+def list_jadwal_unassigned(user: dict = Depends(require_authenticated)):
     """Daftar jadwal yang belum di-tag ke TA manapun (tahun_ajaran_id IS NULL)."""
     try:
         res = (
@@ -419,7 +422,7 @@ def list_jadwal_unassigned():
 
 
 @router.get("/unassigned/rps")
-def list_rps_unassigned():
+def list_rps_unassigned(user: dict = Depends(require_authenticated)):
     """Daftar RPS yang belum di-tag ke TA manapun."""
     try:
         res = (

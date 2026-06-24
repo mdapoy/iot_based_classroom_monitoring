@@ -100,7 +100,11 @@ async def lifespan(app: FastAPI):
 # App
 # ══════════════════════════════════════════════════════════════════════════════
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    docs_url="/docs" if ENV == "dev" else None,
+    redoc_url="/redoc" if ENV == "dev" else None,
+)
 
 # ── 1. Rate limiter (DDoS) ────────────────────────────────────────────────────
 # default_limits berlaku untuk SEMUA route kecuali yang punya @limiter.limit sendiri
