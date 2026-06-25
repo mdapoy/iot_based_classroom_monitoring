@@ -104,6 +104,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if ENV == "dev" else None,
     redoc_url="/redoc" if ENV == "dev" else None,
+    openapi_url="/openapi.json" if ENV == "dev" else None,
 )
 
 # ── 1. Rate limiter (DDoS) ────────────────────────────────────────────────────
