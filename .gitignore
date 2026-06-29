@@ -7,3 +7,5 @@ model.py
 coba.py
 .claude/settings.local.json
 locustfile.py
+audio_speed_changer.py
+local_transcribe.py

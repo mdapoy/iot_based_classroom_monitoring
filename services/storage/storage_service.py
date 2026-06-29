@@ -1,9 +1,11 @@
-from repositories.supabase_client import supabase
+import json
 import mimetypes
+from repositories.supabase_client import supabase
 
-BUCKET            = "transcripts"
-BUCKET_SUMMARY    = "summary"
-BUCKET_EVALUATION = "evaluasi"
+BUCKET              = "transcripts"
+BUCKET_SUMMARY      = "summary"
+BUCKET_EVALUATION   = "evaluasi"
+BUCKET_DIARIZATION  = "diarization"
 
 # Signed URL berlaku 1 jam — cukup untuk sesi baca PDF di FE
 _SIGNED_EXPIRES = 3600
@@ -57,3 +59,18 @@ def upload_evaluation(local_path: str, storage_path: str) -> str:
 
 def get_public_evaluation_url(filename: str) -> str:
     return _signed_url(BUCKET_EVALUATION, filename)
+
+
+def upload_diarization(report_id: int, utterances: list) -> str:
+    path = f"{report_id}.json"
+    supabase.storage.from_(BUCKET_DIARIZATION).upload(
+        path,
+        json.dumps(utterances, ensure_ascii=False).encode("utf-8"),
+        {"content-type": "application/json"},
+    )
+    return path
+
+
+def download_diarization(path: str) -> list:
+    raw = supabase.storage.from_(BUCKET_DIARIZATION).download(path)
+    return json.loads(raw.decode("utf-8"))

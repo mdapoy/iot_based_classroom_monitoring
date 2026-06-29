@@ -1,5 +1,5 @@
 from repositories.supabase_client import supabase
-from services.storage.storage_service import upload_transcript
+from services.storage.storage_service import upload_transcript, upload_diarization
 from core.logger import logger
 
 
@@ -8,9 +8,9 @@ def merge_transcript(report_id: int):
     try:
         logger.info(f"[MERGE] Start | report_id={report_id}")
 
-        # 🔍 ambil chunk
+        # Ambil chunk beserta utterances
         res = supabase.table("audio_chunks") \
-            .select("chunk_index, transcript, status") \
+            .select("chunk_index, transcript, utterances, status") \
             .eq("report_id", report_id) \
             .order("chunk_index") \
             .execute()
@@ -20,19 +20,15 @@ def merge_transcript(report_id: int):
         if not chunks:
             raise Exception("No chunks found")
 
-        # ❗ pastikan semua done
         not_done = [c for c in chunks if c["status"] != "done"]
-
         if not_done:
             raise Exception(f"{len(not_done)} chunks not finished")
 
-        # ❗ pastikan semua ada transcript
         missing = [c for c in chunks if not c.get("transcript")]
-
         if missing:
             raise Exception(f"{len(missing)} chunks missing transcript")
 
-        # 🛑 cek existing dulu
+        # Cek existing
         existing = supabase.table("reports") \
             .select("transcript_path") \
             .eq("id", report_id) \
@@ -40,53 +36,38 @@ def merge_transcript(report_id: int):
             .execute()
 
         if existing.data and existing.data.get("transcript_path"):
-
-            logger.warning(
-                f"[MERGE SKIP] Already exists | report_id={report_id}"
-            )
-
+            logger.warning(f"[MERGE SKIP] Already exists | report_id={report_id}")
             return existing.data["transcript_path"]
 
-        # 🔗 merge transcript
-        full_text = "\n".join([
-            c["transcript"] for c in chunks
-        ])
+        # Gabungkan teks
+        full_text = "\n".join([c["transcript"] for c in chunks])
+        logger.info(f"[MERGE] text_length={len(full_text)}")
 
-        logger.info(
-            f"[MERGE DONE] text_length={len(full_text)}"
-        )
+        # Gabungkan utterances dari semua chunk (urut chunk_index)
+        all_utterances = []
+        for c in chunks:
+            all_utterances.extend(c.get("utterances") or [])
+        logger.info(f"[MERGE] total_utterances={len(all_utterances)}")
 
-        filename = f"report_{report_id}.txt"
+        # Upload transcript ke bucket transcripts
+        transcript_path = upload_transcript(f"report_{report_id}.txt", full_text)
+        logger.info(f"[MERGE] transcript uploaded → {transcript_path}")
 
-        # 📦 upload transcript
-        path = upload_transcript(filename, full_text)
+        # Upload utterances ke bucket diarization
+        utterances_path = upload_diarization(report_id, all_utterances)
+        logger.info(f"[MERGE] diarization uploaded → {utterances_path}")
 
-        logger.info(
-            f"[UPLOAD SUCCESS] transcript_path={path}"
-        )
-
-        # 📝 update report
+        # Update report
         supabase.table("reports").update({
-            "status": "transcribed",
-            "transcript_path": path,
-            "error_message": None
+            "status":           "transcribed",
+            "transcript_path":  transcript_path,
+            "utterances_path":  utterances_path,
+            "error_message":    None,
         }).eq("id", report_id).execute()
 
-        logger.info(
-            f"[REPORT UPDATED] report_id={report_id}"
-        )
-
-        logger.info(
-            f"[MERGE SUCCESS] report_id={report_id}"
-        )
-
+        logger.info(f"[MERGE SUCCESS] report_id={report_id}")
         return full_text
 
     except Exception as e:
-
-        logger.error(
-            f"[MERGE ERROR] report_id={report_id} | {e}",
-            exc_info=True
-        )
-
+        logger.error(f"[MERGE ERROR] report_id={report_id} | {e}", exc_info=True)
         return None

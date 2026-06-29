@@ -9,10 +9,6 @@ import re
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
-
-# =========================================================
-# SUMMARY (untuk 4 KPI card di Dashboard)
-# =========================================================
 @router.get("/summary")
 def get_summary(
     range_days: int = Query(180, description="rentang hari utk menghitung tepat_waktu_pct"),
@@ -97,10 +93,6 @@ def get_summary(
         "range": {"start": str(start), "end": str(end)},
     }
 
-
-# =========================================================
-# HELPER: durasi RPS & aktual
-# =========================================================
 def _parse_rps_minutes(pengalaman: Optional[str]):
     """Durasi harapan (menit) dari pengalaman_pembelajaran_mahasiswa RPS."""
     if not pengalaman:
@@ -135,14 +127,6 @@ def _actual_minutes_from_summary(summary: Optional[dict]):
     )
     return round(total_sec / 60) if total_sec > 0 else None
 
-
-# =========================================================
-# DETEKSI ANOMALI
-# Anomali = pertemuan yang:
-#   • Durasi aktual < durasi RPS  → "Durasi Kurang"
-#   • kesesuaian_materi TIDAK SESUAI → "Materi Tidak Sesuai"
-#   • kesesuaian_materi SEBAGIAN SESUAI → "Materi Sebagian Sesuai"
-# =========================================================
 @router.get("/anomali")
 def get_anomali(
     tahun_ajaran_id: Optional[str] = Query(None, description="Filter berdasarkan tahun ajaran"),
@@ -164,7 +148,7 @@ def get_anomali(
     if report_ids:
         for s in (
             supabase.table("activity_stats")
-            .select("report_id, ceramah_sec, tanya_jawab_sec, diskusi_sec, diam_sec")
+            .select("report_id, pertemuan_ke, ceramah_sec, tanya_jawab_sec, diskusi_sec, diam_sec")
             .in_("report_id", report_ids)
             .execute()
             .data or []
@@ -212,7 +196,8 @@ def get_anomali(
             continue
 
         # Durasi aktual: coba activity_stats dulu, fallback ke activity_summary jsonb
-        actual = _actual_minutes_from_activity(stats_by_report.get(r["id"]))
+        stats = stats_by_report.get(r["id"])
+        actual = _actual_minutes_from_activity(stats)
         if actual is None:
             actual = _actual_minutes_from_summary(r.get("activity_summary"))
 
@@ -233,6 +218,7 @@ def get_anomali(
 
         out.append({
             "report_id":         r["id"],
+            "pertemuan_ke":      (stats or {}).get("pertemuan_ke"),
             "tanggal":           r.get("tanggal"),
             "jam":               r.get("jam"),
             "ruangan":           r.get("ruangan"),
