@@ -32,7 +32,7 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
     tidak memblokir event loop utama FastAPI.
     """
     from services.storage.google_drive import get_file_from_gdrive_flexible
-    from services.chunker import split_audio
+    from services.chunker import split_audio, normalize_audio
 
     t_total = time.time()
 
@@ -45,7 +45,7 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
 
     try:
         # ── STEP 1: Search + Download dari GDrive ────────────────────
-        logger.info(f"[DOWNLOAD WORKER] [1/4] Mencari file di GDrive...")
+        logger.info(f"[DOWNLOAD WORKER] [1/5] Mencari file di GDrive...")
         t1 = time.time()
 
         audio_path, real_filename, used_folder_id = await asyncio.to_thread(
@@ -62,7 +62,7 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
         file_size = _fmt_size(audio_path)
 
         logger.info(
-            f"[DOWNLOAD WORKER] [1/4] SELESAI | "
+            f"[DOWNLOAD WORKER] [1/5] SELESAI | "
             f"file={real_filename} | size={file_size} | waktu={elapsed1}"
         )
 
@@ -117,29 +117,47 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
         except Exception as mon_err:
             logger.warning(f"[DOWNLOAD WORKER] Gagal resolve monitoring_id: {mon_err}")
 
-        # ── STEP 2: Update status DB ──────────────────────────────────
+        # ── STEP 2: Normalisasi audio (loudnorm EBU R128) ────────────
+        logger.info(f"[DOWNLOAD WORKER] [2/5] Normalisasi audio (loudnorm)...")
+        t_norm = time.time()
+
+        try:
+            normalized_path = await asyncio.to_thread(normalize_audio, audio_path)
+            audio_to_chunk  = normalized_path
+            elapsed_norm    = _fmt_elapsed(time.time() - t_norm)
+            logger.info(
+                f"[DOWNLOAD WORKER] [2/5] SELESAI normalisasi | "
+                f"output={os.path.basename(normalized_path)} | waktu={elapsed_norm}"
+            )
+        except Exception as norm_err:
+            logger.warning(
+                f"[DOWNLOAD WORKER] Normalisasi gagal, lanjut dengan audio asli | {norm_err}"
+            )
+            audio_to_chunk = audio_path
+
+        # ── STEP 3: Update status DB ──────────────────────────────────
         supabase.table("reports").update(
             {"status": "chunking"}
         ).eq("id", report_id).execute()
 
-        # ── STEP 3: Split audio dengan ffmpeg ────────────────────────
-        logger.info(f"[DOWNLOAD WORKER] [2/4] Memulai chunking audio (ffmpeg)...")
+        # ── STEP 4: Split audio dengan ffmpeg ────────────────────────
+        logger.info(f"[DOWNLOAD WORKER] [3/5] Memulai chunking audio (ffmpeg)...")
         t2 = time.time()
 
-        chunks = await asyncio.to_thread(split_audio, audio_path, report_id=report_id)
+        chunks = await asyncio.to_thread(split_audio, audio_to_chunk, report_id=report_id)
 
         if not chunks:
             raise Exception("Gagal melakukan chunking audio")
 
         elapsed2 = _fmt_elapsed(time.time() - t2)
         logger.info(
-            f"[DOWNLOAD WORKER] [2/4] SELESAI | "
+            f"[DOWNLOAD WORKER] [3/5] SELESAI | "
             f"total_chunks={len(chunks)} | waktu={elapsed2}"
         )
 
-        # ── STEP 4: Insert chunks ke DB ───────────────────────────────
+        # ── STEP 5: Insert chunks ke DB ───────────────────────────────
         logger.info(
-            f"[DOWNLOAD WORKER] [3/4] Menyimpan {len(chunks)} chunk ke database..."
+            f"[DOWNLOAD WORKER] [4/5] Menyimpan {len(chunks)} chunk ke database..."
         )
         t3 = time.time()
 
@@ -151,16 +169,16 @@ async def run_download_worker(report_id: int, search_prefix: str, search_suffix:
                 "status":      "pending"
             }).execute()
             logger.info(
-                f"[DOWNLOAD WORKER] [3/4] Chunk {i + 1}/{len(chunks)} tersimpan"
+                f"[DOWNLOAD WORKER] [4/5] Chunk {i + 1}/{len(chunks)} tersimpan"
             )
 
         elapsed3 = _fmt_elapsed(time.time() - t3)
         logger.info(
-            f"[DOWNLOAD WORKER] [3/4] SELESAI | waktu={elapsed3}"
+            f"[DOWNLOAD WORKER] [4/5] SELESAI | waktu={elapsed3}"
         )
 
-        # ── STEP 5: Kick off STT + Summary workers ────────────────────
-        logger.info(f"[DOWNLOAD WORKER] [4/4] Menjalankan STT worker + Summary worker...")
+        # ── STEP 6: Kick off STT + Summary workers ────────────────────
+        logger.info(f"[DOWNLOAD WORKER] [5/5] Menjalankan STT worker + Summary worker...")
 
         from services.worker.worker_manager import start_stt_worker
         await start_stt_worker()
