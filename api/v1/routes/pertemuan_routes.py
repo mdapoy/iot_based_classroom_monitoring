@@ -42,18 +42,65 @@ def _get_week_monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
+def _derive_active_tahun_semester(today: Optional[date] = None) -> tuple:
+    """
+    Tentukan tahun ajaran & semester AKTIF dari bulan berjalan (WIB).
+      • Genap  : Februari–Juli   (bulan 2–7)
+      • Ganjil : Agustus–Januari (bulan 8–12 dan 1)
+    """
+    today = today or datetime.now(_WIB).date()
+    y, m = today.year, today.month
+    if 2 <= m <= 7:
+        semester, start = "genap", y - 1
+    elif m >= 8:
+        semester, start = "ganjil", y
+    else:  # m == 1
+        semester, start = "ganjil", y - 1
+    return f"{start}/{start + 1}", semester
+
+
 def _get_active_ta() -> dict:
-    """Return row tahun_ajaran yang is_aktif=True, atau raise 404."""
-    rows = (
-        supabase.table("tahun_ajaran")
-        .select("id, tahun, semester, is_aktif")
-        .eq("is_aktif", True)
-        .limit(1)
-        .execute()
-        .data
-    )
+    """Return row tahun_ajaran AKTIF — ditentukan dari bulan berjalan
+    (bukan flag is_aktif). Baris dibuat otomatis bila belum ada."""
+    tahun, semester = _derive_active_tahun_semester()
+
+    def _fetch():
+        return (
+            supabase.table("tahun_ajaran")
+            .select("id, tahun, semester, is_aktif")
+            .eq("tahun", tahun)
+            .eq("semester", semester)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+
+    rows = _fetch()
     if not rows:
-        raise HTTPException(status_code=404, detail="Tidak ada tahun ajaran yang aktif")
+        existing_sem = {
+            r["semester"]
+            for r in (
+                supabase.table("tahun_ajaran")
+                .select("semester")
+                .eq("tahun", tahun)
+                .execute()
+                .data
+                or []
+            )
+        }
+        to_insert = [
+            {"tahun": tahun, "semester": s}
+            for s in ("ganjil", "genap")
+            if s not in existing_sem
+        ]
+        if to_insert:
+            supabase.table("tahun_ajaran").insert(to_insert).execute()
+            logger.info(f"[PERTEMUAN] auto-created tahun={tahun} semester={[x['semester'] for x in to_insert]}")
+        rows = _fetch()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Gagal menentukan tahun ajaran aktif")
     return rows[0]
 
 
@@ -73,7 +120,7 @@ def _get_ta_by_id(ta_id: str) -> dict:
 
 
 def _resolve_ta(tahun_ajaran_id: Optional[str]) -> dict:
-    """Gunakan ta_id jika disediakan, fallback ke TA aktif."""
+    """Gunakan ta_id jika disediakan, fallback ke TA aktif (derivasi bulan)."""
     return _get_ta_by_id(tahun_ajaran_id) if tahun_ajaran_id else _get_active_ta()
 
 
@@ -217,7 +264,6 @@ def add_skip_date(body: SkipDateBody, user: dict = Depends(require_authenticated
     cfg = _get_or_create_config(ta["id"])
 
     skip = list(cfg.get("skip_dates") or [])
-    # Normalisasi existing ke Senin sebelum cek duplikat
     skip_normalized = [_get_week_monday(date.fromisoformat(str(s))).isoformat() for s in skip]
 
     if monday in skip_normalized:
@@ -397,7 +443,7 @@ async def upload_kalender(
             ),
         )
 
-    # Tentukan semester aktif untuk response summary
+    # Tentukan semester aktif untuk response summary (derivasi bulan)
     ta_aktif   = _get_active_ta()
     year_first = int(ta_aktif["tahun"].split("/")[0])
     sem_num    = "1" if ta_aktif["semester"].lower() == "ganjil" else "2"

@@ -26,13 +26,34 @@ def _env_config() -> dict:
     }
 
 
+def _derive_active_tahun_semester(today: date | None = None) -> tuple:
+    """
+    Tentukan tahun ajaran & semester AKTIF dari tanggal berjalan (WIB).
+      • Genap  : Februari–Juli   (bulan 2–7)
+      • Ganjil : Agustus–Januari (bulan 8–12 dan 1)
+    Konsisten dengan tahun_ajaran_routes & pertemuan_routes.
+    """
+    today = today or datetime.now(_WIB).date()
+    y, m = today.year, today.month
+    if 2 <= m <= 7:
+        semester, start = "genap", y - 1
+    elif m >= 8:
+        semester, start = "ganjil", y
+    else:  # m == 1
+        semester, start = "ganjil", y - 1
+    return f"{start}/{start + 1}", semester
+
+
 def _fetch_active_config() -> dict:
-    """Query DB: ambil semester_config milik tahun_ajaran yang is_aktif=True."""
+    """Query DB: ambil semester_config milik TA aktif.
+    TA aktif dipilih dari BULAN berjalan (bukan flag is_aktif)."""
     try:
+        tahun, semester = _derive_active_tahun_semester()
         ta = (
             supabase.table("tahun_ajaran")
             .select("id")
-            .eq("is_aktif", True)
+            .eq("tahun", tahun)
+            .eq("semester", semester)
             .limit(1)
             .execute()
             .data
