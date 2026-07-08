@@ -58,12 +58,27 @@ def _dedup_sort(rows: list[dict]) -> list[dict]:
 
 
 def get_active_tahun_ajaran_id() -> str | None:
-    """Ambil UUID tahun_ajaran is_aktif=true dari DB."""
+    """Ambil UUID tahun_ajaran AKTIF — ditentukan dari BULAN berjalan (WIB),
+    bukan flag is_aktif. Konsisten dengan rps_service & pertemuan_routes
+    (Genap: Feb–Jul · Ganjil: Agu–Jan)."""
+    from datetime import datetime, timedelta, timezone
+    _WIB = timezone(timedelta(hours=7))
     try:
+        today = datetime.now(_WIB).date()
+        y, m = today.year, today.month
+        if 2 <= m <= 7:
+            semester, start = "genap", y - 1
+        elif m >= 8:
+            semester, start = "ganjil", y
+        else:  # m == 1
+            semester, start = "ganjil", y - 1
+        tahun = f"{start}/{start + 1}"
+
         res = (
             supabase.table("tahun_ajaran")
             .select("id")
-            .eq("is_aktif", True)
+            .eq("tahun", tahun)
+            .eq("semester", semester)
             .limit(1)
             .execute()
         )
