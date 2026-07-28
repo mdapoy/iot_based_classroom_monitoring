@@ -181,6 +181,141 @@ def _format_windows_for_gemini(
 
 
 # ─────────────────────────────────────────────────────────────
+# CONTENT-RICH FALLBACK (dipakai saat diarization cuma 1 speaker unik)
+# ─────────────────────────────────────────────────────────────
+
+def _build_turns_from_utterances(utterances: list, gap_threshold_sec: float = 2.0) -> list:
+    """
+    Pecah tiap utterance jadi "turn" (segmen bicara berkelanjutan) di titik
+    manapun jeda antar-kata >= gap_threshold_sec, memakai data 'words'.
+
+    Tujuannya: utterance yang di-diarize sebagai "1 speaker ngomong ratusan
+    detik nonstop" mungkin sebenarnya menyembunyikan jeda/interupsi singkat
+    dari orang lain yang tidak sempat ke-split jadi utterance terpisah oleh
+    AssemblyAI. Jeda antar-kata yang panjang adalah sinyal potensi itu — jadi
+    turn hasil pecahan ini punya durasi terukur (bukan sekadar ditandai di
+    teks), sehingga bisa dianalisis dengan threshold durasi yang sama seperti
+    Mode A (CERAMAH/DISKUSI_TANYA_JAWAB).
+
+    Kalau utterance tidak punya 'words' (mis. file *_utterances_only.json
+    yang sudah di-strip) atau cuma 1 kata: seluruh utterance jadi 1 turn
+    (degradasi graceful).
+
+    Return list turn terurut start_sec, bentuknya kompatibel dengan
+    _build_timeline(): {"speaker", "start_sec", "end_sec", "duration_sec", "text"}.
+    """
+    turns = []
+    for u in utterances:
+        words = u.get("words") or []
+        if len(words) < 2:
+            turns.append({
+                "speaker":      u.get("speaker"),
+                "start_sec":    u["start_sec"],
+                "end_sec":      u["end_sec"],
+                "duration_sec": round(u["end_sec"] - u["start_sec"], 3),
+                "text":         (u.get("text") or "").strip(),
+            })
+            continue
+
+        seg_start_idx = 0
+        for i in range(1, len(words)):
+            gap = words[i]["start_sec"] - words[i - 1]["end_sec"]
+            if gap >= gap_threshold_sec:
+                seg_words = words[seg_start_idx:i]
+                turns.append({
+                    "speaker":      u.get("speaker"),
+                    "start_sec":    seg_words[0]["start_sec"],
+                    "end_sec":      seg_words[-1]["end_sec"],
+                    "duration_sec": round(seg_words[-1]["end_sec"] - seg_words[0]["start_sec"], 3),
+                    "text":         " ".join(w.get("text", "") for w in seg_words).strip(),
+                })
+                seg_start_idx = i
+
+        seg_words = words[seg_start_idx:]
+        turns.append({
+            "speaker":      u.get("speaker"),
+            "start_sec":    seg_words[0]["start_sec"],
+            "end_sec":      seg_words[-1]["end_sec"],
+            "duration_sec": round(seg_words[-1]["end_sec"] - seg_words[0]["start_sec"], 3),
+            "text":         " ".join(w.get("text", "") for w in seg_words).strip(),
+        })
+
+    turns.sort(key=lambda t: t["start_sec"])
+    return turns
+
+
+def _format_windows_turns_for_gemini(
+    timeline: list,
+    audio_duration_sec: float,
+    window_size: int = CHUNK_DURATION_SEC,
+) -> str:
+    """
+    Fallback ketika diarization cuma mendeteksi <=1 speaker unik (statistik
+    per-speaker tidak reliable). Timeline di sini dibangun dari "turn" (lihat
+    _build_turns_from_utterances), bukan dari speaker asli.
+
+    Per window: turn TERPANJANG = kandidat durasi CERAMAH (1 blok bicara
+    panjang tanpa jeda berarti). Total turn LAIN (bukan yang terpanjang) =
+    kandidat durasi DISKUSI_TANYA_JAWAB (kumpulan bicara singkat/interupsi).
+    Sama seperti Mode A, tapi menggantikan "waktu per speaker" dengan
+    "durasi per turn" karena cuma ada 1 speaker nominal.
+    """
+    if not timeline:
+        return "(tidak ada data timeline)"
+
+    total_sec   = audio_duration_sec or (timeline[-1]["end_sec"] if timeline else 0)
+    num_windows = max(1, int(total_sec / window_size) + (1 if total_sec % window_size else 0))
+
+    def fmt(s: float) -> str:
+        return f"{int(s // 60):02d}:{int(s % 60):02d}"
+
+    lines = []
+    for w in range(num_windows):
+        w_start = w * window_size
+        w_end   = min(w_start + window_size, total_sec)
+
+        entries = [
+            e for e in timeline
+            if e["start_sec"] < w_end and e["end_sec"] > w_start
+        ]
+        speech = [e for e in entries if e["type"] == "SPEECH"]
+        diams  = [e for e in entries if e["type"] == "DIAM"]
+
+        def clipped_dur(e):
+            return max(0, min(e["end_sec"], w_end) - max(e["start_sec"], w_start))
+
+        speech_sorted = sorted(speech, key=clipped_dur, reverse=True)
+
+        if speech_sorted:
+            longest_dur = clipped_dur(speech_sorted[0])
+            other_dur   = sum(clipped_dur(e) for e in speech_sorted[1:])
+        else:
+            longest_dur = 0.0
+            other_dur   = 0.0
+
+        total_diam = sum(clipped_dur(e) for e in diams)
+
+        samples = [
+            f'  [{fmt(e["start_sec"])}] "{(e["text"] or "")[:120].strip()}"'
+            for e in speech_sorted[:3]
+            if (e["text"] or "").strip()
+        ]
+
+        block = (
+            f"[WINDOW {w + 1} | {fmt(w_start)}–{fmt(w_end)}]\n"
+            f"  Turn terpanjang (kandidat CERAMAH)              : {longest_dur:.0f}s\n"
+            f"  Total turn lain (kandidat DISKUSI/TANYA_JAWAB)  : {other_dur:.0f}s\n"
+            f"  Diam                                            : {total_diam:.0f}s"
+        )
+        if samples:
+            block += "\n  Contoh :\n" + "\n".join(samples)
+
+        lines.append(block)
+
+    return "\n\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────
 # CONTENT-BASED FORMATTER (fallback jika tidak ada diarization)
 # ─────────────────────────────────────────────────────────────
 
@@ -325,15 +460,37 @@ def classify_activities(
     chunks: list,
     total_duration_sec: float,
     max_retries: int = 3,
+    window_sec: int | None = None,
+    ceramah_threshold_sec: int | None = None,
+    diskusi_tj_threshold_sec: int | None = None,
+    use_content_fallback: bool = False,
 ) -> dict:
     """
-    Klasifikasikan aktivitas pembelajaran per window 5 menit menggunakan Gemini.
+    Klasifikasikan aktivitas pembelajaran per window menggunakan Gemini.
 
-    Dua mode input (dipilih otomatis):
-      A. DIARIZATION  — jika chunks memiliki kolom 'utterances' (dari AssemblyAI)
-                        → gunakan statistik bicara per speaker per window
-      B. CONTENT-BASED — fallback jika tidak ada utterances
-                        → klasifikasi dari pola konten teks saja
+    Tiga mode input (dipilih otomatis):
+      A. DIARIZATION     — jika chunks memiliki kolom 'utterances' dengan
+                           >=2 speaker unik → gunakan statistik bicara per
+                           speaker per window
+      A2. CONTENT-RICH FALLBACK — jika 'utterances' ada tapi cuma <=1 speaker
+                           unik (diarization gagal membedakan speaker) DAN
+                           use_content_fallback=True → pecah tiap utterance
+                           jadi "turn" berdasarkan jeda antar-kata >= 2 detik
+                           (data 'words'), lalu pakai durasi turn terpanjang
+                           (kandidat CERAMAH) vs total turn lain (kandidat
+                           DISKUSI_TANYA_JAWAB) per window — threshold sama
+                           persis dengan Mode A, cuma sumber datanya beda
+      B. CONTENT-BASED   — fallback jika tidak ada 'utterances' sama sekali
+                           → klasifikasi dari pola konten teks saja (selalu
+                           window CHUNK_DURATION_SEC, tidak terpengaruh window_sec)
+
+    window_sec / ceramah_threshold_sec / diskusi_tj_threshold_sec /
+    use_content_fallback bersifat opsional dan HANYA dipakai oleh script
+    evaluasi (evaluation/f1_evaluator.py, evaluation/annotation_helper.py)
+    untuk eksperimen. Pemanggil produksi (summary_worker.py) tidak mengisi
+    parameter ini sehingga behavior tetap seperti semula (window
+    CHUNK_DURATION_SEC, prompt "label paling dominan", tidak ada fallback
+    content-rich walau diarization cuma 1 speaker).
 
     Return dict:
       success (bool), ceramah_pct, tanya_jawab_pct, diskusi_pct,
@@ -347,17 +504,36 @@ def classify_activities(
 
     total_min = round(total_duration_sec / 60, 1)
 
-    # ── Pilih mode berdasarkan ketersediaan diarization data ─────────
-    has_diarization = any(c.get("utterances") for c in chunks)
+    # ── Parameter eksperimen (default None → behavior produksi lama) ──
+    use_threshold_prompt = window_sec is not None
+    eff_window_sec       = window_sec or CHUNK_DURATION_SEC
+    eff_ceramah_th       = ceramah_threshold_sec or 120
+    eff_diskusi_th       = diskusi_tj_threshold_sec or 60
 
-    if has_diarization:
+    # ── Pilih mode berdasarkan ketersediaan & kualitas diarization data ──
+    has_diarization      = any(c.get("utterances") for c in chunks)
+    all_utterances       = _merge_utterances_from_chunks(chunks) if has_diarization else []
+    unique_speakers      = {u.get("speaker") for u in all_utterances if u.get("speaker")}
+    diarization_degenerate = (
+        has_diarization and use_content_fallback and len(unique_speakers) <= 1
+    )
+
+    if diarization_degenerate:
+        logger.info(
+            f"[ACTIVITY] Mode CONTENT-RICH FALLBACK (turn-duration) | "
+            f"chunks={len(chunks)} speakers_unik={len(unique_speakers)}"
+        )
+        turns     = _build_turns_from_utterances(all_utterances, gap_threshold_sec=2.0)
+        timeline  = _build_timeline(turns, SILENCE_THRESHOLD_S)
+        formatted = _format_windows_turns_for_gemini(timeline, total_duration_sec, window_size=eff_window_sec)
+        mode_desc = "content-rich fallback (turn-duration, diarization degenerate)"
+    elif has_diarization:
         logger.info(
             f"[ACTIVITY] Mode DIARIZATION | chunks={len(chunks)}"
         )
-        all_utterances = _merge_utterances_from_chunks(chunks)
-        timeline       = _build_timeline(all_utterances, SILENCE_THRESHOLD_S)
-        formatted      = _format_windows_for_gemini(timeline, total_duration_sec)
-        mode_desc      = "diarization (speaker stats)"
+        timeline  = _build_timeline(all_utterances, SILENCE_THRESHOLD_S)
+        formatted = _format_windows_for_gemini(timeline, total_duration_sec, window_size=eff_window_sec)
+        mode_desc = "diarization (speaker stats)"
     else:
         logger.info(
             f"[ACTIVITY] Mode CONTENT-BASED | chunks={len(chunks)}"
@@ -365,8 +541,44 @@ def classify_activities(
         formatted = format_chunks_for_gemini(chunks)
         mode_desc = "content-based (plain text)"
 
+    # Mode content-based selalu window CHUNK_DURATION_SEC (format_chunks_for_gemini
+    # tidak menerima window_size), jadi window_min & instruksi threshold HANYA
+    # relevan untuk mode diarization/content-rich fallback — konsisten dengan
+    # docstring di atas.
+    window_min = round((eff_window_sec if has_diarization else CHUNK_DURATION_SEC) / 60, 1)
+
     # ── Bangun prompt ─────────────────────────────────────────────────
-    if has_diarization:
+    # DIAM di mode threshold-based (eval only) didefinisikan sebagai PROPORSI
+    # window yang diam (>=60%, sama seperti DIAM_THRESHOLD di
+    # evaluation/annotation_helper.py) — bukan cuma "ada 1 jeda >=3 detik"
+    # yang terlalu longgar untuk klasifikasi window 3 menit penuh. Rule lama
+    # ("Diam total >= 3 detik") dipertahankan untuk mode produksi (tidak
+    # threshold-based) supaya behavior produksi tidak berubah.
+    use_threshold_diam = diarization_degenerate or use_threshold_prompt
+    if use_threshold_diam:
+        diam_sec_th = round(0.6 * eff_window_sec)
+        diam_def = (
+            f"  • DIAM       : Total waktu diam DALAM window >= 60% dari durasi "
+            f"window (~{diam_sec_th} detik dari {window_min} menit) — bukan cuma "
+            f"karena ada satu jeda >=3 detik di suatu titik."
+        )
+    else:
+        diam_def = "  • DIAM       : Diam total >= 3 detik, atau teks sangat pendek/kosong."
+
+    if diarization_degenerate:
+        data_label = "DATA PER WINDOW (turn stats + contoh teks, diarization speaker tidak reliable)"
+        definitions = (
+            "  • CERAMAH    : Didominasi 1 turn bicara panjang tanpa jeda berarti. "
+            "Turn lain (kalau ada) sangat singkat.\n"
+            "  • TANYA_JAWAB: Ada beberapa turn singkat bergantian dengan turn "
+            "lain, pola tanya-jawab.\n"
+            "  • DISKUSI    : Beberapa turn dengan porsi lebih merata/terbuka.\n"
+            f"{diam_def}\n\n"
+            "  Catatan: karena diarization cuma mendeteksi 1 speaker unik "
+            "(tidak reliable), data di bawah dipecah jadi \"turn\" berdasarkan "
+            "jeda antar-kata >= 2 detik — bukan berdasarkan speaker asli."
+        )
+    elif has_diarization:
         data_label = "DATA PER WINDOW (speaker stats + contoh teks)"
         definitions = (
             "  • CERAMAH    : Didominasi 1 speaker (dosen) yang berbicara panjang. "
@@ -375,7 +587,7 @@ def classify_activities(
             "Pola Q&A antara dosen dan mahasiswa.\n"
             "  • DISKUSI    : 2+ speaker bicara dengan porsi lebih merata, "
             "percakapan terbuka.\n"
-            "  • DIAM       : Diam total >= 3 detik, atau teks sangat pendek/kosong."
+            f"{diam_def}"
         )
     else:
         data_label = "DATA TRANSKRIP PER WINDOW"
@@ -390,17 +602,29 @@ def classify_activities(
             "tidak bermakna (kuis/ujian tertulis/jeda)."
         )
 
+    if diarization_degenerate or (use_threshold_prompt and has_diarization):
+        # Reuse instruksi threshold yang sama persis untuk mode diarization normal
+        # DAN content-rich fallback (turn-duration) — cuma beda sumber datanya
+        # ("waktu per speaker" vs "durasi per turn"), threshold-nya sama.
+        instruksi_label = f"""2. Tentukan label window dengan aturan berikut (bukan sekadar yang paling dominan):
+   - CERAMAH jika estimasi durasi pola ceramah (1 speaker/turn mendominasi) > {eff_ceramah_th} detik dalam window tersebut.
+   - DISKUSI atau TANYA_JAWAB jika estimasi durasi pola diskusi/tanya-jawab (2+ speaker/turn bergantian) > {eff_diskusi_th} detik dalam window tersebut. Pilih salah satu sesuai definisi masing-masing di atas.
+   - DIAM sesuai definisi DIAM di atas (tidak berubah).
+   - Jika TIDAK ADA kategori di atas yang memenuhi ambang batasnya, pilih kategori dengan estimasi durasi TERBESAR di window tersebut."""
+    else:
+        instruksi_label = "2. Beri 1 label aktivitas per window."
+
     prompt = f"""Anda adalah analis rekaman kuliah. Rekaman berdurasi {total_duration_sec:.0f} detik (~{total_min} menit).
 
 DEFINISI AKTIVITAS:
 {definitions}
 
-{data_label} (5 menit per window):
+{data_label} ({window_min} menit per window):
 {formatted}
 
 INSTRUKSI:
 1. Analisis setiap window berdasarkan data di atas.
-2. Beri 1 label aktivitas per window.
+{instruksi_label}
 3. Gabungkan window berurutan dengan label SAMA menjadi 1 segmen.
 4. Tambahkan deskripsi singkat (10-20 kata) yang menjelaskan konteks aktivitas.
 5. Gunakan start_sec dan end_sec dalam satuan detik (bukan menit).

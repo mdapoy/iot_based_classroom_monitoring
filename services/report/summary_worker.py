@@ -25,6 +25,14 @@ from core.logger import logger
 semaphore    = asyncio.Semaphore(2)
 IDLE_TIMEOUT = 300  # 5 menit
 
+# ── Konfigurasi klasifikasi aktivitas (window 3 menit + threshold) ──
+# Sudah divalidasi F1 Macro 71,01% (152 sampel, 11 file) via
+# evaluation/f1_evaluator.py sebelum dipromosikan ke produksi di sini.
+ACTIVITY_WINDOW_SEC       = 180   # window 3 menit (sebelumnya default 5 menit/CHUNK_DURATION_SEC)
+CERAMAH_THRESHOLD_SEC     = 120   # label CERAMAH jika durasi pola ini > 2 menit
+DISKUSI_TJ_THRESHOLD_SEC  = 60    # label DISKUSI/TANYA_JAWAB jika durasi pola ini > 1 menit
+USE_CONTENT_FALLBACK      = True  # fallback turn-duration kalau diarization cuma <=1 speaker unik
+
 
 def _fetch_chunks(report_id: int) -> tuple[list[dict], float]:
     """
@@ -32,7 +40,10 @@ def _fetch_chunks(report_id: int) -> tuple[list[dict], float]:
     Return (chunks, total_duration_sec).
 
     Jika AssemblyAI dipakai, setiap chunk juga memiliki kolom 'utterances' JSONB
-    yang digunakan oleh classify_activities() untuk mode diarization.
+    yang digunakan oleh classify_activities() untuk mode diarization — dianalisis
+    per window 3 menit dengan threshold CERAMAH/DISKUSI_TANYA_JAWAB (lihat
+    ACTIVITY_WINDOW_SEC dkk di atas), plus fallback turn-duration kalau
+    diarization cuma mendeteksi <=1 speaker unik.
     """
     from services.activity.activity_analyzer import CHUNK_DURATION_SEC
 
@@ -169,7 +180,13 @@ async def process_summary(report):
 
             summary_result, activity_result = await asyncio.gather(
                 asyncio.to_thread(summarize_text, transcript, nama_matkul),
-                asyncio.to_thread(classify_activities, chunks, total_duration_sec),
+                asyncio.to_thread(
+                    classify_activities, chunks, total_duration_sec,
+                    window_sec=ACTIVITY_WINDOW_SEC,
+                    ceramah_threshold_sec=CERAMAH_THRESHOLD_SEC,
+                    diskusi_tj_threshold_sec=DISKUSI_TJ_THRESHOLD_SEC,
+                    use_content_fallback=USE_CONTENT_FALLBACK,
+                ),
             )
 
             # Validasi summary
