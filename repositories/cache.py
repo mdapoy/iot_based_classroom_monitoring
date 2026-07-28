@@ -90,6 +90,9 @@ def invalidate_jadwal_cache() -> None:
         _jadwal_cache      = None
         _jadwal_expires_at = 0.0
     logger.info("[CACHE] jadwal_kuliah cache invalidated")
+
+
+def get_all_dosen() -> list[dict]:
     """
     Return semua dosen aktif (kode_dosen, nama_lengkap).
     Cache TTL 30 menit. Thread-safe.
