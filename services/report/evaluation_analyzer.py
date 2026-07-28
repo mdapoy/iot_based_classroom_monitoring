@@ -83,6 +83,24 @@ def _avg_kesesuaian_pct(values) -> float | None:
     return round(sum(nums) / len(nums), 1)
 
 
+def _combine_kesesuaian_rps(pertemuan_data: list[dict]) -> float | None:
+    """
+    Gabungkan kesesuaian materi (kesesuaian_pct) dan kesesuaian metode
+    (method_score) jadi satu skor RPS, bobot 50/50 masing-masing.
+    None pada salah satu komponen diperlakukan sebagai 0 (bukan diabaikan) —
+    RPS yang tidak menyebut metode apa pun tetap kena penalti pada komponen
+    metode-nya. Kalau KEDUA komponen None (tidak ada data sama sekali),
+    return None (tampil "-"), bukan 0%.
+    """
+    avg_materi = _avg_kesesuaian_pct([p["kesesuaian_pct"] for p in pertemuan_data])
+    avg_metode = _avg_kesesuaian_pct([p["method_score"] for p in pertemuan_data])
+
+    if avg_materi is None and avg_metode is None:
+        return None
+
+    return round(0.5 * (avg_materi or 0) + 0.5 * (avg_metode or 0), 1)
+
+
 def _fmt_kes_display(val) -> str:
     """Format kesesuaian_rps untuk prompt LLM dan teks: float → '75%', string → as-is."""
     try:
@@ -100,17 +118,31 @@ def _mode_activity(values: list[str]) -> str:
 
 
 def _format_aktivitas_str(row: dict) -> str:
-    """Format string aktivitas untuk tabel PDF, misal: 'Ceramah 70% · Diskusi 30%'."""
-    parts = []
-    for label, key in [
-        ("Ceramah",     "ceramah_pct"),
-        ("Diskusi",     "diskusi_pct"),
-        ("Tanya Jawab", "tanya_jawab_pct"),
-        ("Diam",        "diam_pct"),
-    ]:
-        pct = int(row.get(key) or 0)
-        if pct > 0:
-            parts.append(f"{label} {pct}%")
+    """
+    Format string aktivitas untuk tabel PDF, misal: 'Ceramah 70% · Diskusi & Tanya Jawab 30%'.
+    Pembulatan tiap kategori independen bisa membuat total meleset dari 100%
+    (mis. 33.4+33.4+33.4 dibulatkan jadi 33+33+33=99) — selisihnya dibebankan
+    ke kategori dengan porsi terbesar supaya total yang ditampilkan tetap 100%.
+    """
+    raw = {
+        "Ceramah":               float(row.get("ceramah_pct") or 0),
+        "Diskusi & Tanya Jawab": float(row.get("diskusi_pct") or 0) + float(row.get("tanya_jawab_pct") or 0),
+        "Diam":                  float(row.get("diam_pct") or 0),
+    }
+
+    total_raw = sum(raw.values())
+    if total_raw <= 0:
+        return "-"
+
+    scaled  = {k: v / total_raw * 100 for k, v in raw.items()}
+    rounded = {k: round(v) for k, v in scaled.items()}
+
+    diff = 100 - sum(rounded.values())
+    if diff != 0:
+        biggest = max(scaled, key=scaled.get)
+        rounded[biggest] += diff
+
+    parts = [f"{label} {pct}%" for label, pct in rounded.items() if pct > 0]
     return " · ".join(parts) if parts else "-"
 
 
@@ -638,7 +670,7 @@ async def build_eval_data(
         total_ptm  = len(pertemuan_data)
         n_tepat    = sum(1 for p in pertemuan_data if "TEPAT" in (p["status_waktu"] or "").upper())
         pct_tepat  = round(n_tepat / total_ptm * 100, 1) if total_ptm else 0.0
-        kes_rps    = _avg_kesesuaian_pct([p["kesesuaian_pct"] for p in pertemuan_data])
+        kes_rps    = _combine_kesesuaian_rps(pertemuan_data)
         metode_dom = _mode_activity([
             act_by_report.get(r["id"], {}).get("dominant_activity", "-")
             for r in matkul_reports

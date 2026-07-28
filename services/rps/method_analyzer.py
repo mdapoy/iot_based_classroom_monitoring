@@ -4,17 +4,24 @@ method_analyzer.py
 Hitung skor kesesuaian metode pembelajaran (0-100) berdasarkan overlap
 antara aktivitas yang direncanakan di RPS dengan aktivitas aktual dari rekaman.
 
+DISKUSI dan TANYA_JAWAB diperlakukan sebagai SATU kategori gabungan
+(DISKUSI_TANYA_JAWAB), konsisten dengan classify_activities() yang juga
+menggabungkan keduanya jadi label "DISKUSI & TANYA JAWAB" — keduanya
+sama-sama merepresentasikan metode interaktif, jadi RPS yang menyebut
+"diskusi" tetap dianggap terpenuhi kalau aktualnya tanya-jawab (atau
+sebaliknya), dibanding dinilai sebagai dua metode yang berbeda.
+
 Formula:
     expected_per = 100 / N          (porsi ideal per aktivitas yang direncanakan)
     score_i      = min(actual_pct_i / expected_per, 1.0)
     method_score = mean(score_i) × 100
 
 Contoh:
-    RPS "Kuliah dan diskusi"  → expected = [CERAMAH, DISKUSI], N=2, expected_per=50%
-    Aktual: ceramah=100%, diskusi=0%
-    score_CERAMAH = min(100/50, 1.0) = 1.0
-    score_DISKUSI = min(0/50,   1.0) = 0.0
-    method_score  = (1.0+0.0)/2 × 100 = 50%
+    RPS "Kuliah dan diskusi"  → expected = [CERAMAH, DISKUSI_TANYA_JAWAB], N=2, expected_per=50%
+    Aktual: ceramah=100%, interaktif(diskusi+tanya_jawab)=0%
+    score_CERAMAH             = min(100/50, 1.0) = 1.0
+    score_DISKUSI_TANYA_JAWAB = min(0/50,   1.0) = 0.0
+    method_score              = (1.0+0.0)/2 × 100 = 50%
 """
 
 from core.logger import logger
@@ -25,11 +32,9 @@ _KEYWORD_MAP: dict[str, list[str]] = {
         "kuliah", "ceramah", "lecture", "presentasi", "paparan",
         "penjelasan dosen", "penyampaian materi",
     ],
-    "DISKUSI": [
+    "DISKUSI_TANYA_JAWAB": [
         "diskusi", "discussion", "kelompok", "group",
         "kolaborasi", "peer", "berdiskusi",
-    ],
-    "TANYA_JAWAB": [
         "tanya jawab", "tanya-jawab", "question", "kuis", "quiz",
         "latihan soal", "soal", "evaluasi", "latihan",
     ],
@@ -37,9 +42,8 @@ _KEYWORD_MAP: dict[str, list[str]] = {
 
 # activity key → field di activity_result
 _PCT_FIELD: dict[str, str] = {
-    "CERAMAH":    "ceramah_pct",
-    "DISKUSI":    "diskusi_pct",
-    "TANYA_JAWAB": "tanya_jawab_pct",
+    "CERAMAH":             "ceramah_pct",
+    "DISKUSI_TANYA_JAWAB": "interaktif_pct",
 }
 
 
@@ -48,7 +52,7 @@ _PCT_FIELD: dict[str, str] = {
 def parse_expected_activities(pengalaman_rps: str) -> list[str]:
     """
     Parse teks pengalaman_pembelajaran_mahasiswa → list aktivitas yang direncanakan.
-    Return subset dari ["CERAMAH", "DISKUSI", "TANYA_JAWAB"].
+    Return subset dari ["CERAMAH", "DISKUSI_TANYA_JAWAB"].
     """
     if not pengalaman_rps or not pengalaman_rps.strip():
         return []
