@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from repositories.supabase_client import supabase
 from services.stt.stt_service import fetch_transcript_aai, extract_chunk_data
 from services.stt.merge_service import merge_transcript
+from services.stt.worker import mark_chunk_failed
 from core.logger import logger
 
 load_dotenv()
@@ -60,7 +61,7 @@ def handle_assemblyai_callback(transcript_id: str) -> bool:
         # ── 1. Cari chunk ────────────────────────────────────────────
         chunk_res = (
             supabase.table("audio_chunks")
-            .select("id, report_id, chunk_index, status")
+            .select("id, report_id, chunk_index, status, retry_count")
             .eq("task_id", transcript_id)
             .execute()
         )
@@ -96,10 +97,10 @@ def handle_assemblyai_callback(transcript_id: str) -> bool:
 
         # ── 4. Handle error dari AssemblyAI ─────────────────────────
         if chunk_data["status"] == "failed":
-            supabase.table("audio_chunks").update({
-                "status":        "failed",
-                "error_message": chunk_data.get("error", "AssemblyAI error"),
-            }).eq("id", chunk_id).execute()
+            mark_chunk_failed(
+                chunk_id, report_id, chunk.get("retry_count", 0),
+                chunk_data.get("error", "AssemblyAI error"),
+            )
             logger.error(
                 f"[AAI CALLBACK] chunk={chunk_id} FAILED: {chunk_data.get('error')}"
             )

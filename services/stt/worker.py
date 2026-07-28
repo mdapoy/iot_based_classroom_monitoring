@@ -19,6 +19,7 @@ STT_LANGUAGE       = os.getenv("STT_LANGUAGE", "id")
 semaphore    = asyncio.Semaphore(5)
 IDLE_TIMEOUT = 300   # 5 menit
 RETRY_DELAY  = 30    # detik sebelum retry chunk failed
+MAX_RETRIES  = 3     # total percobaan = 1 awal + 3 retry, sebelum chunk dianggap gagal permanen
 
 
 def _build_webhook_url() -> str | None:
@@ -42,19 +43,26 @@ def _build_webhook_url() -> str | None:
 
 async def process_chunk(chunk: dict):
     async with semaphore:
-        chunk_id  = chunk["id"]
-        path      = chunk["chunk_path"]
-        report_id = chunk["report_id"]
-        chunk_idx = chunk.get("chunk_index", 0)
+        chunk_id    = chunk["id"]
+        path        = chunk["chunk_path"]
+        report_id   = chunk["report_id"]
+        chunk_idx   = chunk.get("chunk_index", 0)
+        retry_count = chunk.get("retry_count", 0)
+        is_retry    = chunk["status"] == "failed"
 
         try:
             logger.info(f"[WORKER] Processing chunk {chunk_id} (index={chunk_idx})")
 
             # ── Optimistic lock ──────────────────────────────────────
             now_iso = datetime.utcnow().isoformat()
+            update_fields = {"status": "processing", "updated_at": now_iso}
+            if is_retry:
+                retry_count += 1
+                update_fields["retry_count"] = retry_count
+
             updated = (
                 supabase.table("audio_chunks")
-                .update({"status": "processing", "updated_at": now_iso})
+                .update(update_fields)
                 .eq("id", chunk_id)
                 .eq("status", chunk["status"])
                 .execute()
@@ -104,11 +112,36 @@ async def process_chunk(chunk: dict):
         except Exception as e:
             error_msg = str(e)
             logger.error(f"[WORKER ERROR] Chunk {chunk_id}: {error_msg}")
-            supabase.table("audio_chunks").update({
-                "status":        "failed",
-                "error_message": error_msg,
-                "updated_at":    datetime.utcnow().isoformat(),
-            }).eq("id", chunk_id).execute()
+            mark_chunk_failed(chunk_id, report_id, retry_count, error_msg)
+
+
+def mark_chunk_failed(chunk_id: int, report_id: int, retry_count: int, error_msg: str):
+    """
+    Tandai chunk gagal. Kalau retry_count sudah capai MAX_RETRIES, chunk
+    ditandai 'error' (permanen, tidak akan di-retry lagi) dan report ikut
+    ditandai 'failed'. Kalau belum, chunk ditandai 'failed' (masih eligible
+    di-retry worker loop berikutnya).
+    """
+    now_iso = datetime.utcnow().isoformat()
+    if retry_count >= MAX_RETRIES:
+        logger.error(
+            f"[WORKER] Chunk {chunk_id} exceeded max retries "
+            f"({retry_count}/{MAX_RETRIES}), giving up: {error_msg}"
+        )
+        supabase.table("audio_chunks").update({
+            "status":        "error",
+            "error_message": error_msg,
+            "updated_at":    now_iso,
+        }).eq("id", chunk_id).execute()
+        supabase.table("reports").update({
+            "status": "failed",
+        }).eq("id", report_id).in_("status", ["chunking", "processing"]).execute()
+    else:
+        supabase.table("audio_chunks").update({
+            "status":        "failed",
+            "error_message": error_msg,
+            "updated_at":    now_iso,
+        }).eq("id", chunk_id).execute()
 
 
 def _should_retry(chunk: dict) -> bool:
@@ -137,7 +170,7 @@ async def run_worker():
         try:
             res = (
                 supabase.table("audio_chunks")
-                .select("id, report_id, chunk_index, status, chunk_path, updated_at")
+                .select("id, report_id, chunk_index, status, chunk_path, updated_at, retry_count")
                 .in_("status", ["pending", "failed"])
                 .limit(5)
                 .execute()
@@ -151,7 +184,11 @@ async def run_worker():
                 filtered = [
                     c for c in chunks
                     if c["status"] == "pending"
-                    or (c["status"] == "failed" and _should_retry(c))
+                    or (
+                        c["status"] == "failed"
+                        and c.get("retry_count", 0) < MAX_RETRIES
+                        and _should_retry(c)
+                    )
                 ]
 
                 if filtered:
